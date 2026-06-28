@@ -37,7 +37,7 @@ public class Outline : MonoBehaviour {
     get { return outlineMode; }
     set {
       outlineMode = value;
-      needsUpdate = true;
+      UpdateMaterialProperties();
     }
   }
 
@@ -45,7 +45,7 @@ public class Outline : MonoBehaviour {
     get { return outlineColor; }
     set {
       outlineColor = value;
-      needsUpdate = true;
+      UpdateMaterialProperties();
     }
   }
 
@@ -53,7 +53,7 @@ public class Outline : MonoBehaviour {
     get { return outlineWidth; }
     set {
       outlineWidth = value;
-      needsUpdate = true;
+      UpdateMaterialProperties();
     }
   }
 
@@ -108,7 +108,7 @@ public class Outline : MonoBehaviour {
     BakeMaterialsCache();
 
     // Apply material properties immediately
-    needsUpdate = true;
+    UpdateMaterialProperties();
   }
 
   private void BakeMaterialsCache() {
@@ -143,7 +143,7 @@ public class Outline : MonoBehaviour {
     }
 
     if (active) {
-        needsUpdate = true;
+        UpdateMaterialProperties();
     }
   }
 
@@ -163,7 +163,7 @@ public class Outline : MonoBehaviour {
   void OnValidate() {
 
     // Update material properties
-    needsUpdate = true;
+    UpdateMaterialProperties();
 
     // Clear cache when baking is disabled or corrupted
     if (!precomputeOutline && bakeKeys.Count != 0 || bakeKeys.Count != bakeValues.Count) {
@@ -174,14 +174,6 @@ public class Outline : MonoBehaviour {
     // Generate smooth normals when baking is enabled
     if (precomputeOutline && bakeKeys.Count == 0) {
       Bake();
-    }
-  }
-
-  void Update() {
-    if (needsUpdate) {
-      needsUpdate = false;
-
-      UpdateMaterialProperties();
     }
   }
 
@@ -212,8 +204,18 @@ public class Outline : MonoBehaviour {
 
     foreach (var meshFilter in GetComponentsInChildren<MeshFilter>()) {
 
+      // Skip if mesh or sharedMesh is null
+      if (meshFilter == null || meshFilter.sharedMesh == null) {
+        continue;
+      }
+
       // Skip duplicates
       if (!bakedMeshes.Add(meshFilter.sharedMesh)) {
+        continue;
+      }
+
+      // Skip non-readable meshes to avoid Unity exception
+      if (!meshFilter.sharedMesh.isReadable) {
         continue;
       }
 
@@ -230,8 +232,21 @@ public class Outline : MonoBehaviour {
     // Retrieve or generate smooth normals
     foreach (var meshFilter in GetComponentsInChildren<MeshFilter>()) {
 
+      // Skip if mesh or sharedMesh is null
+      if (meshFilter == null || meshFilter.sharedMesh == null) {
+        continue;
+      }
+
       // Skip if smooth normals have already been adopted
       if (!registeredMeshes.Add(meshFilter.sharedMesh)) {
+        continue;
+      }
+
+      // Skip non-readable meshes to avoid Unity exception
+      if (!meshFilter.sharedMesh.isReadable) {
+#if UNITY_EDITOR
+        Debug.LogWarning($"[Outline] Mesh '{meshFilter.sharedMesh.name}' pada '{gameObject.name}' tidak dapat dibaca (Read/Write Enabled = false). Silakan aktifkan 'Read/Write Enabled' di Import Settings model tersebut.");
+#endif
         continue;
       }
 
@@ -253,8 +268,18 @@ public class Outline : MonoBehaviour {
     // Clear UV3 on skinned mesh renderers
     foreach (var skinnedMeshRenderer in GetComponentsInChildren<SkinnedMeshRenderer>()) {
 
+      // Skip if skinnedMeshRenderer or sharedMesh is null
+      if (skinnedMeshRenderer == null || skinnedMeshRenderer.sharedMesh == null) {
+        continue;
+      }
+
       // Skip if UV3 has already been reset
       if (!registeredMeshes.Add(skinnedMeshRenderer.sharedMesh)) {
+        continue;
+      }
+
+      // Skip non-readable meshes
+      if (!skinnedMeshRenderer.sharedMesh.isReadable) {
         continue;
       }
 
@@ -318,6 +343,9 @@ public class Outline : MonoBehaviour {
   }
 
   void UpdateMaterialProperties() {
+    if (outlineMaskMaterial == null || outlineFillMaterial == null) {
+      return;
+    }
 
     // Apply properties according to mode
     outlineFillMaterial.SetColor("_OutlineColor", outlineColor);

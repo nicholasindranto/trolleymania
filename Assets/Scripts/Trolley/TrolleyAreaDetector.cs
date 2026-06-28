@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 /// <summary>
 /// Script ini ditempelkan pada objek 'TrolleyArea' yang memiliki BoxCollider bertipe IsTrigger.
@@ -9,6 +10,17 @@ public class TrolleyAreaDetector : MonoBehaviour
 {
     // Menyimpan referensi ke TrolleyController untuk menambahkan/mengurangi berat secara dinamis.
     private TrolleyController trolleyController;
+
+    // Menyimpan daftar barang belanjaan yang saat ini berada di dalam keranjang trolley.
+    private List<ObjectScript> itemsInTrolley = new List<ObjectScript>();
+
+    // Event yang dipicu ketika daftar barang di dalam trolley berubah (ditambah/dikurang)
+    public System.Action OnTrolleyItemsChanged;
+
+    /// <summary>
+    /// Mendapatkan list objek yang berada di dalam trolley.
+    /// </summary>
+    public List<ObjectScript> ItemsInTrolley => itemsInTrolley;
 
     private void Awake()
     {
@@ -43,6 +55,13 @@ public class TrolleyAreaDetector : MonoBehaviour
                 // Ubah status menjadi Taken agar sistem interaksi skip objek ini dari highlight
                 objectScript.Status = ObjectStatus.Taken;
 
+                // Tambahkan ke daftar barang di dalam trolley
+                if (!itemsInTrolley.Contains(objectScript))
+                {
+                    itemsInTrolley.Add(objectScript);
+                    OnTrolleyItemsChanged?.Invoke();
+                }
+
                 // Tambahkan berat barang ke total berat di TrolleyController
                 if (trolleyController != null)
                 {
@@ -51,8 +70,8 @@ public class TrolleyAreaDetector : MonoBehaviour
                 }
 
                 // LOGIC DI BALIK LAYAR (Pembaruan Progres Belanjaan):
-                // Laporkan pertambahan barang ke ObjectiveManager untuk mencocokkan dengan shopping list target.
-                if (ObjectiveManager.Instance != null)
+                // Laporkan pertambahan barang ke ObjectiveManager hanya jika objek bertipe Goods
+                if (other.CompareTag("Goods") && ObjectiveManager.Instance != null)
                 {
                     ObjectiveManager.Instance.UpdateObjectiveProgress(objectScript.ObjName, 1);
                 }
@@ -76,8 +95,24 @@ public class TrolleyAreaDetector : MonoBehaviour
             // 2. Jika memiliki ObjectScript dan statusnya Taken (berada di dalam trolley)
             if (objectScript != null && objectScript.Status == ObjectStatus.Taken)
             {
+                // OPTIMALISASI FISIKA WEBGL:
+                // Unity Engine memicu event OnTriggerExit palsu ketika sebuah Rigidbody diganti statusnya menjadi kinematic (isKinematic = true)
+                // saat ditidurkan di dalam trolley. Kita harus menyaring event palsu ini dengan mendeteksi isKinematic.
+                Rigidbody itemRb = other.GetComponent<Rigidbody>();
+                if (itemRb == null) itemRb = other.GetComponentInParent<Rigidbody>();
+                if (itemRb == null) itemRb = other.GetComponentInChildren<Rigidbody>();
+
+                if (itemRb != null && itemRb.isKinematic)
+                {
+                    return; // Abaikan event exit palsu karena objek hanya ditidurkan, bukan keluar secara fisik
+                }
+
                 // Kembalikan status menjadi Grounded agar bisa diinteraksi kembali jika berada di tanah
                 objectScript.Status = ObjectStatus.Grounded;
+
+                // Hapus dari daftar barang di dalam trolley
+                itemsInTrolley.Remove(objectScript);
+                OnTrolleyItemsChanged?.Invoke();
 
                 // Kurangi berat barang dari total berat di TrolleyController
                 if (trolleyController != null)
@@ -100,10 +135,10 @@ public class TrolleyAreaDetector : MonoBehaviour
                         {
                             // ClosestPoint mengembalikan koordinat permukaan terdekat atau koordinat objek itu sendiri jika berada di dalam volume.
                             Vector3 closestPoint = interactCollider.ClosestPoint(other.transform.position);
-                            float distanceToCollider = Vector3.Distance(closestPoint, other.transform.position);
+                            float sqrDistanceToCollider = (closestPoint - other.transform.position).sqrMagnitude;
 
                             // Jika jaraknya hampir 0 (sangat dekat/di dalam), daftarkan ulang sebagai kandidat grab/highlight
-                            if (distanceToCollider < 0.05f)
+                            if (sqrDistanceToCollider < 0.0025f)
                             {
                                 Outline outline = other.GetComponent<Outline>();
                                 if (outline == null) outline = other.GetComponentInParent<Outline>();
@@ -119,10 +154,70 @@ public class TrolleyAreaDetector : MonoBehaviour
                 }
 
                 // LOGIC DI BALIK LAYAR (Pengurangan Progres Belanjaan):
-                // Laporkan pengurangan barang belanjaan ke ObjectiveManager karena barang keluar dari keranjang.
-                if (ObjectiveManager.Instance != null)
+                // Laporkan pengurangan barang belanjaan ke ObjectiveManager hanya jika objek bertipe Goods
+                if (other.CompareTag("Goods") && ObjectiveManager.Instance != null)
                 {
                     ObjectiveManager.Instance.UpdateObjectiveProgress(objectScript.ObjName, -1);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Secara eksplisit mengeluarkan barang dari trolley (misal saat dipindahkan ke tangan/di-equip).
+    /// </summary>
+    public void RemoveItemFromTrolley(ObjectScript item)
+    {
+        if (item == null) return;
+
+        if (itemsInTrolley.Contains(item))
+        {
+            itemsInTrolley.Remove(item);
+            OnTrolleyItemsChanged?.Invoke();
+
+            // Kurangi berat barang dari total berat di TrolleyController
+            if (trolleyController != null)
+            {
+                trolleyController.currentWeight = Mathf.Max(0f, trolleyController.currentWeight - item.ObjWeight);
+                Debug.Log($"[Trolley] Barang '{item.ObjName}' dikeluarkan secara paksa (di-equip). Berat: {item.ObjWeight} | Total Berat Trolley: {trolleyController.currentWeight}");
+            }
+
+            // Laporkan pengurangan barang belanjaan ke ObjectiveManager
+            if (item.CompareTag("Goods") && ObjectiveManager.Instance != null)
+            {
+                ObjectiveManager.Instance.UpdateObjectiveProgress(item.ObjName, -1);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Membangunkan semua objek di dalam trolley secara fisik dan memberikan dorongan acak (random impulse) ke atas/samping.
+    /// Dipanggil saat trolley mengalami benturan/tabrakan keras.
+    /// </summary>
+    /// <param name="forceMagnitude">Kekuatan gaya impulse yang diberikan.</param>
+    public void ShakeObjects(float forceMagnitude)
+    {
+        // Bersihkan objek yang mungkin sudah terhapus (destroy) demi menghindari NullReferenceException
+        itemsInTrolley.RemoveAll(item => item == null);
+
+        for (int i = 0; i < itemsInTrolley.Count; i++)
+        {
+            ObjectScript obj = itemsInTrolley[i];
+            if (obj != null)
+            {
+                // Bangunkan Rigidbody terlebih dahulu dan ijinkan simulasi fisika sementara
+                obj.WakeUpFromTrolleyHit();
+
+                Rigidbody objRb = obj.GetComponent<Rigidbody>();
+                if (objRb != null)
+                {
+                    // Arah dorongan acak: didominasi ke arah atas (Y), dengan sedikit kemiringan acak ke sumbu X & Z
+                    float randomX = Random.Range(-0.4f, 0.4f);
+                    float randomZ = Random.Range(-0.4f, 0.4f);
+                    float randomY = Random.Range(0.8f, 1.3f); // Dominasi gaya ke atas agar berpotensi mental keluar
+
+                    Vector3 forceDirection = new Vector3(randomX, randomY, randomZ).normalized;
+                    objRb.AddForce(forceDirection * forceMagnitude, ForceMode.Impulse);
                 }
             }
         }

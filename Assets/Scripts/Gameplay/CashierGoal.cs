@@ -26,32 +26,33 @@ public class CashierGoal : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
-        // LOGIC DI BALIK LAYAR:
-        // Deteksi apakah objek yang memasuki area kasir (trigger) adalah Trolley atau Player.
-        // Kita mencari komponen TrolleyController di objek tersebut, parent-nya, atau anak-anaknya.
-        // Pendekatan ini sangat robust karena tidak tergantung pada tag spesifik.
-        TrolleyController trolley = other.GetComponent<TrolleyController>();
-        if (trolley == null) trolley = other.GetComponentInParent<TrolleyController>();
-        if (trolley == null) trolley = other.GetComponentInChildren<TrolleyController>();
-
-        // Jika objek yang masuk berhubungan dengan Trolley
-        if (trolley != null)
+        // LOGIC DI BALIK LAYAR (Optimasi WebGL):
+        // Memeriksa tag terlebih dahulu untuk menghindari panggilan GetComponent yang mahal pada objek non-player/non-trolley.
+        if (other.CompareTag("PlayerTrolley") || other.CompareTag("Player"))
         {
-            // Periksa apakah ObjectiveManager terdaftar dan semua objektif belanja telah selesai
-            if (ObjectiveManager.Instance != null)
+            TrolleyController trolley = other.GetComponent<TrolleyController>();
+            if (trolley == null) trolley = other.GetComponentInParent<TrolleyController>();
+            if (trolley == null) trolley = other.GetComponentInChildren<TrolleyController>();
+
+            // Jika objek yang masuk berhubungan dengan Trolley
+            if (trolley != null)
             {
-                if (ObjectiveManager.Instance.AreAllObjectivesCompleted())
+                // Periksa apakah ObjectiveManager terdaftar dan semua objektif belanja telah selesai
+                if (ObjectiveManager.Instance != null)
                 {
-                    WinGame();
+                    if (ObjectiveManager.Instance.AreAllObjectivesCompleted())
+                    {
+                        WinGame();
+                    }
+                    else
+                    {
+                        Debug.Log("CashierGoal: Pemain menyentuh kasir, tetapi masih ada belanjaan yang belum lengkap!");
+                    }
                 }
                 else
                 {
-                    Debug.Log("CashierGoal: Pemain menyentuh kasir, tetapi masih ada belanjaan yang belum lengkap!");
+                    Debug.LogError("CashierGoal: ObjectiveManager tidak ditemukan di scene!");
                 }
-            }
-            else
-            {
-                Debug.LogError("CashierGoal: ObjectiveManager tidak ditemukan di scene!");
             }
         }
     }
@@ -67,9 +68,15 @@ public class CashierGoal : MonoBehaviour
         if (bgYouWinPanel != null)
         {
             bgYouWinPanel.SetActive(true);
+
+            // 2. LOGIC DI BALIK LAYAR: Hitung dan tampilkan score akhir menggunakan ScoreManager
+            if (ScoreManager.Instance != null)
+            {
+                ScoreManager.Instance.EndGame(bgYouWinPanel);
+            }
         }
 
-        // 2. LOGIC DI BALIK LAYAR (Time.timeScale = 0):
+        // 3. LOGIC DI BALIK LAYAR (Time.timeScale = 0):
         //    Menyetel Time.timeScale ke 0 akan menghentikan seluruh pembaruan waktu fisika (FixedUpdate) 
         //    dan update berbasis waktu (Time.deltaTime) di Unity. Ini secara efektif mem-pause gameplay 
         //    sehingga player tidak bisa menggerakkan trolley lagi setelah menang.

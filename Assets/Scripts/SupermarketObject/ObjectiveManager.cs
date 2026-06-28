@@ -31,6 +31,12 @@ public class ObjectiveManager : MonoBehaviour
     [Tooltip("Parent transform untuk mengelompokkan semua objek belanjaan yang di-spawn (mencegah Find global).")]
     [SerializeField] private Transform spawnedObjectsParent;
 
+    [Tooltip("Parent transform khusus untuk objek belanjaan (Collectable) yang di-spawn.")]
+    [SerializeField] private Transform collectableObjectsParent;
+
+    [Tooltip("Parent transform khusus untuk objek senjata/lemparan (Throwable) yang di-spawn.")]
+    [SerializeField] private Transform throwableObjectsParent;
+
     [Tooltip("Waktu jeda (detik) antar setiap spawn objek untuk meminimalkan beban CPU (terutama di mobile).")]
     [SerializeField] private float spawnDelay = 0.05f;
 
@@ -59,6 +65,19 @@ public class ObjectiveManager : MonoBehaviour
     [Tooltip("GameObject Text di dalam panel list untuk mencetak seluruh daftar barang belanjaan.")]
     [SerializeField] private GameObject listText;
 
+    // Cache komponen teks untuk menghindari GetComponent runtime
+    private TMPro.TextMeshProUGUI goods1NameTMP;
+    private TMPro.TextMeshProUGUI goods1ProgressTMP;
+    private TMPro.TextMeshProUGUI goods2NameTMP;
+    private TMPro.TextMeshProUGUI goods2ProgressTMP;
+    private TMPro.TextMeshProUGUI listTMP;
+
+    private UnityEngine.UI.Text goods1NameLegacy;
+    private UnityEngine.UI.Text goods1ProgressLegacy;
+    private UnityEngine.UI.Text goods2NameLegacy;
+    private UnityEngine.UI.Text goods2ProgressLegacy;
+    private UnityEngine.UI.Text listLegacy;
+
     // List internal yang menampung daftar belanja acak pemain
     private List<ObjectiveItem> objectives = new List<ObjectiveItem>();
 
@@ -82,11 +101,8 @@ public class ObjectiveManager : MonoBehaviour
 
     private void Start()
     {
-        // Menonaktifkan panel list belanja di awal permainan secara default
-        if (bgListObjective != null)
-        {
-            bgListObjective.SetActive(false);
-        }
+        // Cache komponen teks di awal game
+        CacheTextComponents();
 
         // LOGIC DI BALIK LAYAR:
         // Sesuai alur yang baru, kita acak terlebih dahulu rancangan list belanjaan (objective) pemain.
@@ -96,11 +112,43 @@ public class ObjectiveManager : MonoBehaviour
     }
 
     /// <summary>
+    /// Meng-cache komponen teks UI secara dini agar performa WebGL tetap optimal.
+    /// </summary>
+    private void CacheTextComponents()
+    {
+        if (goods1NameText != null)
+        {
+            goods1NameTMP = goods1NameText.GetComponent<TMPro.TextMeshProUGUI>();
+            if (goods1NameTMP == null) goods1NameLegacy = goods1NameText.GetComponent<UnityEngine.UI.Text>();
+        }
+        if (goods1ProgressText != null)
+        {
+            goods1ProgressTMP = goods1ProgressText.GetComponent<TMPro.TextMeshProUGUI>();
+            if (goods1ProgressTMP == null) goods1ProgressLegacy = goods1ProgressText.GetComponent<UnityEngine.UI.Text>();
+        }
+        if (goods2NameText != null)
+        {
+            goods2NameTMP = goods2NameText.GetComponent<TMPro.TextMeshProUGUI>();
+            if (goods2NameTMP == null) goods2NameLegacy = goods2NameText.GetComponent<UnityEngine.UI.Text>();
+        }
+        if (goods2ProgressText != null)
+        {
+            goods2ProgressTMP = goods2ProgressText.GetComponent<TMPro.TextMeshProUGUI>();
+            if (goods2ProgressTMP == null) goods2ProgressLegacy = goods2ProgressText.GetComponent<UnityEngine.UI.Text>();
+        }
+        if (listText != null)
+        {
+            listTMP = listText.GetComponent<TMPro.TextMeshProUGUI>();
+            if (listTMP == null) listLegacy = listText.GetComponent<UnityEngine.UI.Text>();
+        }
+    }
+
+    /// <summary>
     /// Membuat misi belanja acak dengan total target barang antara 5 sampai 8 unit dari prefabsToSpawn.
     /// </summary>
     private void GenerateRandomObjectives()
     {
-        // 1. Kumpulkan semua prefab unik bertipe Goods dari prefabsToSpawn sebelum barang di-spawn ke scene
+        // 1. Kumpulkan semua prefab unik dari prefabsToSpawn sebelum barang di-spawn ke scene
         List<GameObject> availableGoodsPrefabs = new List<GameObject>();
         List<string> uniqueGoodsNames = new List<string>();
 
@@ -112,7 +160,7 @@ public class ObjectiveManager : MonoBehaviour
             if (objScript == null) objScript = prefab.GetComponentInParent<ObjectScript>();
             if (objScript == null) objScript = prefab.GetComponentInChildren<ObjectScript>();
 
-            if (objScript != null && objScript.KindOfObject == ObjectKind.Goods)
+            if (objScript != null)
             {
                 if (!uniqueGoodsNames.Contains(objScript.ObjName))
                 {
@@ -124,7 +172,7 @@ public class ObjectiveManager : MonoBehaviour
 
         if (availableGoodsPrefabs.Count == 0)
         {
-            Debug.LogError("ObjectiveManager: Tidak ditemukan prefab bertipe Goods di array prefabsToSpawn!");
+            Debug.LogError("ObjectiveManager: Tidak ditemukan prefab di array prefabsToSpawn!");
             return;
         }
 
@@ -194,6 +242,11 @@ public class ObjectiveManager : MonoBehaviour
     /// </summary>
     private IEnumerator SpawnObjectsSlowly(List<GameObject> requiredSpawns)
     {
+        if (bgListObjective != null)
+        {
+            bgListObjective.SetActive(false);
+        }
+
         if (spawnPointsRoot == null || prefabsToSpawn == null || prefabsToSpawn.Length == 0)
         {
             Debug.LogWarning("ObjectiveManager: SpawnPoints atau PrefabsToSpawn kosong!");
@@ -245,9 +298,12 @@ public class ObjectiveManager : MonoBehaviour
                 GameObject spawnedObj = Instantiate(prefab, spawnPoint.position, spawnPoint.rotation);
                 
                 // LOGIC DI BALIK LAYAR (Optimalisasi Mobile - Group Parenting):
-                // Mengelompokkan semua barang belanjaan hasil spawn ke dalam satu parent khusus.
-                // Ini mempermudah pencarian visual outline secara terarah tanpa menggunakan Find global yang mahal.
-                if (spawnedObjectsParent != null)
+                // Mengelompokkan semua barang belanjaan hasil spawn ke dalam parent khusus.
+                if (collectableObjectsParent != null)
+                {
+                    spawnedObj.transform.SetParent(collectableObjectsParent);
+                }
+                else if (spawnedObjectsParent != null)
                 {
                     spawnedObj.transform.SetParent(spawnedObjectsParent);
                 }
@@ -333,8 +389,6 @@ public class ObjectiveManager : MonoBehaviour
     /// </summary>
     private void UpdateObjectHighlights()
     {
-        if (spawnedObjectsParent == null) return;
-
         // Mode highlight aktif jika panel list belanja sedang terbuka
         bool isHighlightActive = bgListObjective != null && bgListObjective.activeSelf;
 
@@ -348,8 +402,12 @@ public class ObjectiveManager : MonoBehaviour
             }
         }
 
+        // Tentukan target parent untuk iterasi. Prioritas utama adalah collectableObjectsParent, fallback ke spawnedObjectsParent
+        Transform searchParent = collectableObjectsParent != null ? collectableObjectsParent : spawnedObjectsParent;
+        if (searchParent == null) return;
+
         // Loop ke semua anak objek di bawah parent transform khusus belanjaan
-        foreach (Transform child in spawnedObjectsParent)
+        foreach (Transform child in searchParent)
         {
             if (child == null) continue;
 
@@ -454,17 +512,17 @@ public class ObjectiveManager : MonoBehaviour
     {
         if (listText == null) return;
 
-        string fullText = "";
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
         for (int i = 0; i < objectives.Count; i++)
         {
             var item = objectives[i];
             bool isCompleted = item.currentAmount >= item.requiredAmount;
             // Gunakan warna hijau jika selesai (menggunakan 'V' karena karakter unicode centang tidak ter-render oleh font TMPro default), dan orange jika belum
             string prefix = isCompleted ? "<color=green>[V]</color>" : "<color=orange>[-]</color>";
-            fullText += $"{prefix} {item.itemName} ({item.currentAmount}/{item.requiredAmount})\n";
+            sb.Append(prefix).Append(" ").Append(item.itemName).Append(" (").Append(item.currentAmount).Append("/").Append(item.requiredAmount).Append(")\n");
         }
 
-        SetText(listText, fullText);
+        SetTextCached(listText, sb.ToString(), listTMP, listLegacy);
     }
 
     /// <summary>
@@ -475,17 +533,38 @@ public class ObjectiveManager : MonoBehaviour
     {
         if (go == null) return;
 
-        // Coba deteksi komponen TextMeshProUGUI
-        var tmp = go.GetComponent<TMPro.TextMeshProUGUI>();
+        if (go == goods1NameText) SetTextCached(go, content, goods1NameTMP, goods1NameLegacy);
+        else if (go == goods1ProgressText) SetTextCached(go, content, goods1ProgressTMP, goods1ProgressLegacy);
+        else if (go == goods2NameText) SetTextCached(go, content, goods2NameTMP, goods2NameLegacy);
+        else if (go == goods2ProgressText) SetTextCached(go, content, goods2ProgressTMP, goods2ProgressLegacy);
+        else if (go == listText) SetTextCached(go, content, listTMP, listLegacy);
+        else
+        {
+            // Fallback jika memanggil game object non-default
+            var tmp = go.GetComponent<TMPro.TextMeshProUGUI>();
+            if (tmp != null)
+            {
+                tmp.text = content;
+                return;
+            }
+            var txt = go.GetComponent<UnityEngine.UI.Text>();
+            if (txt != null)
+            {
+                txt.text = content;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mengeset teks secara instan menggunakan referensi ter-cache (hemat CPU).
+    /// </summary>
+    private void SetTextCached(GameObject go, string content, TMPro.TextMeshProUGUI tmp, UnityEngine.UI.Text txt)
+    {
         if (tmp != null)
         {
             tmp.text = content;
-            return;
         }
-
-        // Coba deteksi komponen UI Text biasa
-        var txt = go.GetComponent<UnityEngine.UI.Text>();
-        if (txt != null)
+        else if (txt != null)
         {
             txt.text = content;
         }

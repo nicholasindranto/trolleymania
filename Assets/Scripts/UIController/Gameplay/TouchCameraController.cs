@@ -20,11 +20,15 @@ public class TouchCameraController : MonoBehaviour
     [Tooltip("Sensitivitas rotasi vertikal (atas-bawah).")]
     [SerializeField] private float sensitivityY = 0.2f;
 
-    [Tooltip("Batas sudut minimum kemiringan kamera ke bawah (derajat).")]
-    [SerializeField] private float minPitch = -20f;
+    // [Tooltip("Batas sudut minimum kemiringan kamera ke bawah (derajat).")]
+    // [SerializeField] private float minPitch = -20f; // Dinonaktifkan selama playtesting (kamera vertikal stagnan)
 
-    [Tooltip("Batas sudut maksimum kemiringan kamera ke atas (derajat).")]
-    [SerializeField] private float maxPitch = 50f;
+    // [Tooltip("Batas sudut maksimum kemiringan kamera ke atas (derajat).")]
+    // [SerializeField] private float maxPitch = 50f; // Dinonaktifkan selama playtesting (kamera vertikal stagnan)
+
+    [Header("Inversion Settings")]
+    [Tooltip("Balikkan arah rotasi horizontal (kiri-kanan). Berguna jika arah swipe terasa terbalik di mobile WebGL.")]
+    [SerializeField] private bool invertHorizontal = true;
 
     // Nilai rotasi internal dalam Euler Angle
     private float rotationX = 0f; // Rotasi horizontal (mengelilingi sumbu Y) - Hanya digunakan jika trolley tidak ditemukan
@@ -151,28 +155,28 @@ public class TouchCameraController : MonoBehaviour
     /// </summary>
     private void ApplyRotation(float deltaX, float deltaY)
     {
-        // 1. Menggeser jari secara VERTIKAL (Y) akan merotasikan kamera mengelilingi sumbu X (atas-bawah / Pitch).
-        //    LOGIC DI BALIK LAYAR: Kita mengurangi deltaY agar gerakan menyeret jari ke atas (swipe up)
-        //    membuat kamera mendongak ke atas, memberikan rasa kontrol kamera yang natural.
+        // 1. Menggeser jari secara VERTIKAL (Y) - DINONAKTIFKAN UNTUK PLAYTESTING
+        //    Kamera atas-bawah dibikin stagnan (tidak berubah). Nilai awal tetap dipertahankan.
+        //    Kode di bawah ini di-comment agar tidak merubah rotationY selama pengetesan.
+        /*
         rotationY -= deltaY;
-        
-        //    Membatasi sudut vertikal agar kamera tidak bisa berputar 360 derajat (mencegah kamera terbalik).
         rotationY = Mathf.Clamp(rotationY, minPitch, maxPitch);
+        */
 
         // 2. Menggeser jari secara HORIZONTAL (X) akan merotasikan orientasi horizontal (Yaw).
+        //    LOGIC DI BALIK LAYAR: Jika invertHorizontal diset true, kita balikkan tanda deltaX agar
+        //    arah rotasi sesuai dengan harapan pemain (usap kiri berputar ke kiri, usap kanan ke kanan).
+        float finalDeltaX = invertHorizontal ? -deltaX : deltaX;
+
         if (trolley != null)
         {
-            // LOGIC DI BALIK LAYAR (Delegasi Rotasi Fisik ke Trolley):
-            // Karena kita menginginkan trolley/player itu sendiri yang berputar ketika layar kanan digeser (bukan hanya kamera free-look),
-            // kita mengirimkan delta geseran horizontal ('deltaX') langsung ke TrolleyController.
-            // TrolleyController nantinya akan memproses input ini di FixedUpdate() dengan mengintegrasikan efek berat muatan dan kecepatan saat itu.
-            trolley.AddSwipeRotationInput(deltaX);
+            // Kirim input rotasi ter-invert ke TrolleyController untuk diproses secara fisik di FixedUpdate()
+            trolley.AddSwipeRotationInput(finalDeltaX);
         }
         else
         {
-            // Fallback: Jika trolley tidak ditemukan di scene, gunakan rotasi horizontal biasa 
-            // pada variabel internal agar script kamera tetap bisa berputar sebagai kamera TPS normal.
-            rotationX += deltaX;
+            // Fallback jika trolley tidak ada di scene
+            rotationX += finalDeltaX;
         }
     }
 

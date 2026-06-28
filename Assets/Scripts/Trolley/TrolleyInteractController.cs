@@ -14,25 +14,73 @@ public class TrolleyInteractController : MonoBehaviour
 
     [Header("Settings")]
     [Tooltip("Tag objek yang diperbolehkan masuk ke area interaksi.")]
-    [SerializeField] private List<string> targetTags = new List<string> { "Weapon", "Goods" };
+    [SerializeField] private List<string> targetTags = new List<string> { "Goods" };
 
     // List internal untuk menampung semua objek target yang berada di dalam area trigger.
     // LOGIC DI BALIK LAYAR: Menggunakan hash set atau list untuk melacak objek aktif secara dinamis.
     // Setiap kali objek masuk (OnTriggerEnter), ia ditambahkan ke list ini, dan dihapus saat keluar (OnTriggerExit).
-    private List<Outline> candidatesInArea = new List<Outline>();
+    private class CandidateInfo
+    {
+        public Outline outline;
+        public ObjectScript objectScript;
 
-    // Menyimpan referensi ke objek terdekat saat ini yang sedang di-highlight.
-    // Digunakan untuk mendeteksi perubahan objek terdekat sehingga kita tidak melakukan ToggleOutline berulang-ulang setiap frame.
-    private Outline currentHighlightedOutline = null;
+        public CandidateInfo(Outline outline, ObjectScript objectScript)
+        {
+            this.outline = outline;
+            this.objectScript = objectScript;
+        }
+    }
+
+    // List internal untuk menampung semua objek target yang berada di dalam area trigger beserta referensi ObjectScript-nya yang ter-cache.
+    private List<CandidateInfo> candidatesInArea = new List<CandidateInfo>();
+
+    [Header("Optimasi WebGL Settings")]
+    [Tooltip("Interval pembaruan (detik) untuk mengecek kandidat barang terdekat.")]
+    [SerializeField] private float updateInterval = 0.1f;
+
+    [Tooltip("Apakah sorotan outline visual pada barang di sekitar diaktifkan? (Disetel false untuk PUBG UI style).")]
+    [SerializeField] private bool enableOutlineHighlight = false;
+
+    // Cache objek terdekat (WebGL Mobile Optimization)
+    private Outline closestCandidate = null;
+
+    // Event yang dipicu ketika daftar barang di sekitar berubah (bertambah/berkurang)
+    public System.Action OnCandidatesChanged;
 
     // ==========================================
     // Properties dan Method Publik untuk HUDController
     // ==========================================
 
     /// <summary>
-    /// Mengekspos referensi ke objek terdekat yang sedang di-highlight saat ini.
+    /// Mengekspos referensi ke objek terdekat yang sedang di-highlight saat ini secara dinamis (on-demand).
+    /// Menggunakan cache internal O(1) yang diperbarui secara efisien.
     /// </summary>
-    public Outline CurrentHighlightedOutline => currentHighlightedOutline;
+    public Outline CurrentHighlightedOutline => closestCandidate;
+
+    /// <summary>
+    /// Jumlah kandidat barang belanjaan/senjata di sekitar area interaksi saat ini.
+    /// </summary>
+    public int CandidateCount
+    {
+        get
+        {
+            CleanupCandidates();
+            return candidatesInArea.Count;
+        }
+    }
+
+    /// <summary>
+    /// Mengambil ObjectScript dari kandidat pada indeks tertentu secara aman (zero-allocation).
+    /// </summary>
+    public ObjectScript GetCandidateObjectScript(int index)
+    {
+        CleanupCandidates();
+        if (index >= 0 && index < candidatesInArea.Count)
+        {
+            return candidatesInArea[index].objectScript;
+        }
+        return null;
+    }
 
     /// <summary>
     /// Menghapus objek dari daftar kandidat secara manual (misal setelah objek di-grab pemain).
@@ -41,17 +89,30 @@ public class TrolleyInteractController : MonoBehaviour
     {
         if (outline == null) return;
 
-        // Matikan outline terlebih dahulu agar tidak terus menyala saat objek melayang/pindah
-        outline.ToggleOutline(false);
-
-        if (candidatesInArea.Contains(outline))
+        // Matikan outline jika opsi aktif
+        if (enableOutlineHighlight)
         {
-            candidatesInArea.Remove(outline);
+            outline.ToggleOutline(false);
         }
 
-        if (currentHighlightedOutline == outline)
+        bool removed = false;
+        for (int i = 0; i < candidatesInArea.Count; i++)
         {
-            currentHighlightedOutline = null;
+            if (candidatesInArea[i].outline == outline)
+            {
+                candidatesInArea.RemoveAt(i);
+                removed = true;
+                break;
+            }
+        }
+
+        // Segera perbarui referensi terdekat setelah kandidat berkurang
+        UpdateClosestCandidate();
+
+        // Picu event perubahan list agar UI langsung ter-update
+        if (removed)
+        {
+            OnCandidatesChanged?.Invoke();
         }
     }
 
@@ -66,6 +127,12 @@ public class TrolleyInteractController : MonoBehaviour
         // Pastikan tag objek diperbolehkan
         if (targetTags.Contains(outline.tag))
         {
+            // Cek apakah objek sudah terdaftar
+            foreach (var candidate in candidatesInArea)
+            {
+                if (candidate.outline == outline) return;
+            }
+
             // Cek apakah objek sudah berstatus Taken (di dalam trolley/tangan)
             ObjectScript objectScript = outline.GetComponent<ObjectScript>();
             if (objectScript == null) objectScript = outline.GetComponentInParent<ObjectScript>();
@@ -76,11 +143,17 @@ public class TrolleyInteractController : MonoBehaviour
                 return; // Jangan ditambahkan jika statusnya Taken
             }
 
-            // Tambahkan jika belum terdaftar
-            if (!candidatesInArea.Contains(outline))
+            candidatesInArea.Add(new CandidateInfo(outline, objectScript));
+            if (enableOutlineHighlight)
             {
-                candidatesInArea.Add(outline);
+                outline.ToggleOutline(true);
             }
+
+            // Segera perbarui referensi terdekat setelah kandidat bertambah
+            UpdateClosestCandidate();
+
+            // Picu event perubahan list agar UI langsung ter-update
+            OnCandidatesChanged?.Invoke();
         }
     }
 
@@ -94,20 +167,74 @@ public class TrolleyInteractController : MonoBehaviour
         {
             referenceTransform = transform.parent != null ? transform.parent : transform;
         }
+
+        // Jalankan coroutine pemantauan berkala untuk mencari barang terdekat (menghemat Update CPU)
+        StartCoroutine(FindClosestCandidateCoroutine());
     }
 
-    private void Update()
+    /// <summary>
+    /// Coroutine berkala untuk memantau dan memperbarui kandidat barang terdekat.
+    /// Mengurangi beban Update setiap frame pada Mobile WebGL.
+    /// </summary>
+    private System.Collections.IEnumerator FindClosestCandidateCoroutine()
     {
-        // 1. Bersihkan list dari objek yang mungkin telah dihancurkan (destroyed) atau dinonaktifkan (inactive) di game.
-        //    PENTING: Dalam Unity, menghancurkan objek yang ada di dalam List tidak otomatis menghapus slot list tersebut.
-        //    Slot tersebut akan berisi referensi 'null' (Unity fake null). Jika tidak dibersihkan, hal ini memicu NullReferenceException.
+        // Cache yield instruction untuk mencegah alokasi GC (Garbage Collection) di Mobile WebGL
+        WaitForSeconds delay = new WaitForSeconds(updateInterval);
+
+        while (true)
+        {
+            yield return delay;
+
+            // HANYA jalankan perhitungan jarak jika terdapat lebih dari 1 kandidat.
+            // Jika hanya ada 1 kandidat, dia otomatis menjadi yang terdekat (tanpa perhitungan).
+            if (candidatesInArea.Count > 1)
+            {
+                UpdateClosestCandidate();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Memperbarui referensi objek terdekat (closestCandidate) menggunakan sqrMagnitude (WebGL Mobile optimization).
+    /// </summary>
+    private void UpdateClosestCandidate()
+    {
         CleanupCandidates();
 
-        // 2. Cari objek terdekat dari daftar kandidat yang ada.
-        Outline closestOutline = FindClosestCandidate();
+        int count = candidatesInArea.Count;
+        if (count == 0)
+        {
+            closestCandidate = null;
+            return;
+        }
 
-        // 3. Update highlight/outline berdasarkan hasil pencarian objek terdekat.
-        UpdateHighlight(closestOutline);
+        if (count == 1)
+        {
+            closestCandidate = candidatesInArea[0].outline;
+            return;
+        }
+
+        Outline closest = null;
+        float minSqrDistance = float.MaxValue;
+        Vector3 refPos = referenceTransform.position;
+
+        for (int i = 0; i < count; i++)
+        {
+            var candidate = candidatesInArea[i];
+            if (candidate.outline == null) continue;
+
+            // OPTIMALISASI FISIKA: Gunakan sqrMagnitude untuk menghindari operasi akar kuadrat (Mathf.Sqrt)
+            Vector3 diff = refPos - candidate.outline.transform.position;
+            float sqrDist = diff.sqrMagnitude;
+
+            if (sqrDist < minSqrDistance)
+            {
+                minSqrDistance = sqrDist;
+                closest = candidate.outline;
+            }
+        }
+
+        closestCandidate = closest;
     }
 
     /// <summary>
@@ -120,36 +247,43 @@ public class TrolleyInteractController : MonoBehaviour
         // kita coba mendapatkan script 'Outline' pada objek tersebut (bisa langsung di objek itu, di parent, atau di child-nya).
         if (targetTags.Contains(other.tag))
         {
-            // LOGIC DI BALIK LAYAR (Pencegahan Highlight Barang yang Sudah Diambil):
-            // Sebelum memasukkan objek ke daftar kandidat highlight, kita periksa dulu statusnya.
-            // Jika objek tersebut sudah berstatus 'Taken' (di dalam trolley), kita langsung skip agar tidak bisa di-highlight/di-grab lagi.
-            ObjectScript objectScript = other.GetComponent<ObjectScript>();
-            if (objectScript == null) objectScript = other.GetComponentInParent<ObjectScript>();
-            if (objectScript == null) objectScript = other.GetComponentInChildren<ObjectScript>();
-
-            if (objectScript != null && objectScript.Status == ObjectStatus.Taken)
-            {
-                return;
-            }
-
-            Debug.Log("nama object = " + other.name);
             Outline outline = other.GetComponent<Outline>();
             
             // Fallback: Jika Outline tidak ditemukan langsung di collider (misal collider berada di child gameobject),
             // cari di parent atau child objek tersebut.
-            if (outline == null)
-            {
-                outline = other.GetComponentInParent<Outline>();
-            }
-            if (outline == null)
-            {
-                outline = other.GetComponentInChildren<Outline>();
-            }
+            if (outline == null) outline = other.GetComponentInParent<Outline>();
+            if (outline == null) outline = other.GetComponentInChildren<Outline>();
 
-            // Jika script Outline ditemukan dan belum terdaftar di list kandidat kita
-            if (outline != null && !candidatesInArea.Contains(outline))
+            // Jika script Outline ditemukan, cari ObjectScript-nya untuk di-cache sekali saja saat terdeteksi
+            if (outline != null)
             {
-                candidatesInArea.Add(outline);
+                // Cek apakah objek sudah terdaftar
+                foreach (var candidate in candidatesInArea)
+                {
+                    if (candidate.outline == outline) return;
+                }
+
+                ObjectScript objectScript = other.GetComponent<ObjectScript>();
+                if (objectScript == null) objectScript = other.GetComponentInParent<ObjectScript>();
+                if (objectScript == null) objectScript = other.GetComponentInChildren<ObjectScript>();
+
+                // Jangan tambahkan jika statusnya sudah Taken
+                if (objectScript != null && objectScript.Status == ObjectStatus.Taken)
+                {
+                    return;
+                }
+
+                candidatesInArea.Add(new CandidateInfo(outline, objectScript));
+                if (enableOutlineHighlight)
+                {
+                    outline.ToggleOutline(true); // Langsung nyalakan sorotan outline saat barang masuk area jangkauan
+                }
+
+                // Segera perbarui referensi terdekat setelah kandidat bertambah
+                UpdateClosestCandidate();
+
+                // Picu event perubahan list agar UI langsung ter-update
+                OnCandidatesChanged?.Invoke();
             }
         }
     }
@@ -163,24 +297,77 @@ public class TrolleyInteractController : MonoBehaviour
         {
             Outline outline = other.GetComponent<Outline>();
             
-            if (outline == null)
-            {
-                outline = other.GetComponentInParent<Outline>();
-            }
-            if (outline == null)
-            {
-                outline = other.GetComponentInChildren<Outline>();
-            }
+            if (outline == null) outline = other.GetComponentInParent<Outline>();
+            if (outline == null) outline = other.GetComponentInChildren<Outline>();
 
-            // Jika objek terdaftar di list kandidat, hapus dari list.
-            if (outline != null && candidatesInArea.Contains(outline))
+            if (outline != null)
             {
-                candidatesInArea.Remove(outline);
+                // DETEKSI ONTRIGGEREXIT PALSU (PENTING UNTUK WEBGL MOBILE OPTIMIZATION):
+                // Ketika Rigidbody objek di-set isKinematic = true dan useGravity = false (tidur untuk hemat CPU),
+                // Unity secara otomatis menembakkan OnTriggerExit palsu meskipun objek secara fisik masih berada di dalam area trigger.
+                // Kita verifikasi jarak nyata objek ke trolley menggunakan sqrMagnitude (zero Sqrt overhead).
+                float sqrDistance = (referenceTransform.position - outline.transform.position).sqrMagnitude;
+                float maxAllowedDistance = GetInteractAreaRadius();
+                float maxAllowedDistanceSqr = maxAllowedDistance * maxAllowedDistance;
                 
-                // Pastikan outline objek dinonaktifkan ketika meninggalkan area interaksi
-                outline.ToggleOutline(false);
+                if (sqrDistance < maxAllowedDistanceSqr)
+                {
+                    return; // Objek masih di dalam jangkauan fisik, abaikan pemicu exit palsu
+                }
+
+                // Cari dan hapus dari list candidates
+                bool removed = false;
+                for (int i = candidatesInArea.Count - 1; i >= 0; i--)
+                {
+                    if (candidatesInArea[i].outline == outline)
+                    {
+                        candidatesInArea.RemoveAt(i);
+                        if (enableOutlineHighlight)
+                        {
+                            outline.ToggleOutline(false); // Matikan highlight jika opsi aktif
+                        }
+                        removed = true;
+                    }
+                }
+
+                // Segera perbarui referensi terdekat setelah kandidat berkurang
+                UpdateClosestCandidate();
+
+                // Picu event perubahan list agar UI langsung ter-update
+                if (removed)
+                {
+                    OnCandidatesChanged?.Invoke();
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Menghitung radius atau batas jangkauan terluar dari Collider Trigger interaksi ini.
+    /// </summary>
+    private float GetInteractAreaRadius()
+    {
+        Collider myCollider = GetComponent<Collider>();
+        if (myCollider == null) return 5f;
+
+        // Dapatkan skala maksimum bodi untuk mendukung scaling tidak seragam
+        float maxScale = Mathf.Max(transform.lossyScale.x, transform.lossyScale.y, transform.lossyScale.z);
+
+        if (myCollider is SphereCollider sphere)
+        {
+            return sphere.radius * maxScale;
+        }
+        else if (myCollider is BoxCollider box)
+        {
+            // Gunakan setengah dari diagonal box collider sebagai radius representatif
+            return box.size.magnitude * 0.5f * maxScale;
+        }
+        else if (myCollider is CapsuleCollider capsule)
+        {
+            return capsule.height * 0.5f * maxScale;
+        }
+
+        return 5f;
     }
 
     /// <summary>
@@ -189,91 +376,34 @@ public class TrolleyInteractController : MonoBehaviour
     private void CleanupCandidates()
     {
         // Loop mundur (dari belakang ke depan) sangat penting ketika menghapus elemen dari list di dalam loop.
-        // Jika menggunakan loop maju (0 ke Count), indeks akan bergeser saat elemen dihapus, sehingga ada elemen yang terlewat atau terjadi indeks di luar jangkauan.
         for (int i = candidatesInArea.Count - 1; i >= 0; i--)
         {
-            if (candidatesInArea[i] == null || !candidatesInArea[i].gameObject.activeInHierarchy)
+            CandidateInfo candidate = candidatesInArea[i];
+            if (candidate.outline == null || !candidate.outline.gameObject.activeInHierarchy)
             {
                 candidatesInArea.RemoveAt(i);
                 continue;
             }
 
-            // LOGIC DI BALIK LAYAR (Pembersihan Realtime Barang Taken):
-            // Apabila barang sedang berada di dalam trigger area jangkauan tangan dan statusnya berubah menjadi 'Taken'
-            // (misal karena berhasil ditarik masuk ke area trolley), kita harus segera mematikan highlight outline-nya
-            // dan menghapusnya dari daftar kandidat agar tidak terpilih lagi.
-            ObjectScript objectScript = candidatesInArea[i].GetComponent<ObjectScript>();
-            if (objectScript == null) objectScript = candidatesInArea[i].GetComponentInParent<ObjectScript>();
-            if (objectScript == null) objectScript = candidatesInArea[i].GetComponentInChildren<ObjectScript>();
-
-            if (objectScript != null && objectScript.Status == ObjectStatus.Taken)
+            // APABILA barang statusnya berubah menjadi 'Taken' (berhasil masuk trolley atau di tangan),
+            // segera matikan outline dan keluarkan dari list kandidat.
+            if (candidate.objectScript != null && candidate.objectScript.Status == ObjectStatus.Taken)
             {
-                candidatesInArea[i].ToggleOutline(false);
+                candidate.outline.ToggleOutline(false);
                 candidatesInArea.RemoveAt(i);
             }
-        }
-    }
-
-    /// <summary>
-    /// Mencari objek Outline terdekat dari referenceTransform berdasarkan jarak Euclidean 3D.
-    /// </summary>
-    private Outline FindClosestCandidate()
-    {
-        if (candidatesInArea.Count == 0) return null;
-
-        Outline closest = null;
-        float minDistance = float.MaxValue;
-        Vector3 refPos = referenceTransform.position;
-
-        // LOGIC DI BALIK LAYAR:
-        // Kita melintasi list kandidat dan mengukur jarak masing-masing objek ke titik pusat trolley.
-        // Menggunakan Vector3.SqrMagnitude sebenarnya lebih cepat dibanding Vector3.Distance karena tidak menghitung akar kuadrat (square root).
-        // Namun demi kemudahan pemahaman, Vector3.Distance tetap digunakan dan performanya aman karena kapasitas list area supermarket biasanya relatif kecil.
-        foreach (Outline candidate in candidatesInArea)
-        {
-            float dist = Vector3.Distance(refPos, candidate.transform.position);
-            if (dist < minDistance)
-            {
-                minDistance = dist;
-                closest = candidate;
-            }
-        }
-
-        return closest;
-    }
-
-    /// <summary>
-    /// Mengatur nyala/mati outline sesuai dengan target terdekat baru yang terdeteksi.
-    /// </summary>
-    private void UpdateHighlight(Outline newClosest)
-    {
-        // Kasus 1: Tidak ada perubahan target terdekat yang di-highlight
-        if (currentHighlightedOutline == newClosest) return;
-
-        // Kasus 2: Target terdekat berubah (atau objek lama keluar dan tidak ada pengganti)
-        if (currentHighlightedOutline != null)
-        {
-            // Matikan highlight pada objek lama yang tidak lagi menjadi yang terdekat
-            currentHighlightedOutline.ToggleOutline(false);
-        }
-
-        // Kasus 3: Menetapkan highlight pada target terdekat yang baru
-        currentHighlightedOutline = newClosest;
-
-        if (currentHighlightedOutline != null)
-        {
-            // Nyalakan highlight pada target terdekat yang baru
-            currentHighlightedOutline.ToggleOutline(true);
         }
     }
 
     // Dipanggil saat komponen dinonaktifkan untuk merapikan sisa highlight yang masih aktif.
     private void OnDisable()
     {
-        if (currentHighlightedOutline != null)
+        for (int i = 0; i < candidatesInArea.Count; i++)
         {
-            currentHighlightedOutline.ToggleOutline(false);
-            currentHighlightedOutline = null;
+            if (candidatesInArea[i].outline != null)
+            {
+                candidatesInArea[i].outline.ToggleOutline(false);
+            }
         }
         candidatesInArea.Clear();
     }

@@ -104,15 +104,14 @@ public class FloatingJoystick : MonoBehaviour, IPointerDownHandler, IDragHandler
             eventData.pressEventCamera, 
             out Vector2 localPoint))
         {
-            // 2. Hitung jarak dari titik pusat ke posisi jari saat ini menggunakan Vector2.magnitude.
-            float distance = localPoint.magnitude;
+            // 2. Hitung jarak kuadrat dari titik pusat ke posisi jari saat ini menggunakan sqrMagnitude (zero Sqrt overhead).
+            float sqrDistance = localPoint.sqrMagnitude;
+            float dragRangeSqr = dragRange * dragRange;
 
             // 3. Batasi pergerakan handle agar tidak keluar melebihi batas lingkaran luar (dragRange).
-            if (distance > dragRange)
+            if (sqrDistance > dragRangeSqr)
             {
-                // LOGIC DI BALIK LAYAR:
-                // localPoint.normalized memberikan arah (vektor dengan panjang 1) dari pusat ke jari.
-                // Mengalikan arah tersebut dengan dragRange memosisikan handle tepat di batas maksimum lingkaran.
+                // Posisikan handle tepat di batas maksimum lingkaran.
                 Vector2 direction = localPoint.normalized;
                 handle.anchoredPosition = direction * dragRange;
             }

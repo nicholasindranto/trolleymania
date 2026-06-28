@@ -16,24 +16,24 @@ public class TrolleyController : MonoBehaviour
     [SerializeField] private float maxSpeed = 8f;
 
     [Tooltip("Seberapa cepat trolley berakselerasi menuju kecepatan maksimum.")]
-    [SerializeField] private float acceleration = 2f;
+    [SerializeField] private float acceleration = 5f;
 
     [Tooltip("Seberapa cepat trolley mengerem saat joystick dilepas.")]
-    [SerializeField] private float deceleration = 4f;
+    [SerializeField] private float deceleration = 8f;
 
     [Tooltip("Batas mati input joystick (deadzone). Input di bawah nilai ini akan diabaikan.")]
     [SerializeField] private float inputDeadzone = 0.1f;
 
     [Header("Steering Settings")]
-    [Tooltip("Kecepatan rotasi/belok dasar saat trolley bergerak lambat.")]
-    [SerializeField] private float baseTurnSpeed = 90f;
+    // [Tooltip("Kecepatan rotasi/belok dasar saat trolley bergerak lambat.")]
+    // [SerializeField] private float baseTurnSpeed = 90f; // Dinonaktifkan sementara karena rotasi menggunakan akumulasi swipe langsung
 
     [Tooltip("Ambang batas rasio kecepatan (0-1) di mana kemudi mulai terkunci sangat berat (full speed threshold).")]
     [SerializeField] private float heavyTurnSpeedThreshold = 0.75f;
 
     [Tooltip("Pengali kecepatan belok saat berada di kecepatan maksimum. Semakin kecil nilainya, semakin sukar dibelokkan saat kencang (Inersia berat).")]
     [Range(0.05f, 0.8f)]
-    [SerializeField] private float turnDifficultyAtMaxSpeed = 0.2f;
+    [SerializeField] private float turnDifficultyAtMaxSpeed = 0.45f;
 
     [Tooltip("Sudut belok minimal untuk memicu rotasi fisik Rigidbody.")]
     [SerializeField] private float minTurnAngleThreshold = 0.0001f;
@@ -43,7 +43,11 @@ public class TrolleyController : MonoBehaviour
     public float currentWeight = 0f;
 
     [Tooltip("Seberapa besar pengaruh berat barang terhadap penurunan akselerasi dan belokan.")]
-    [SerializeField] private float weightImpactMultiplier = 0.5f;
+    [SerializeField] private float weightImpactMultiplier = 0.15f;
+
+    [Header("Upright Stability Settings")]
+    [Tooltip("Interval waktu (detik) untuk mereset rotasi X dan Z agar tetap 0. Set ke 0 untuk mereset setiap frame.")]
+    [SerializeField] private float rotationResetInterval = 0.5f;
 
     // Variabel internal
     private Rigidbody rb;
@@ -68,10 +72,22 @@ public class TrolleyController : MonoBehaviour
     // Hal ini digunakan untuk mengurangi akselerasi dan daya belok secara proporsional.
     public float WeightFactor => 1f / (1f + (currentWeight * weightImpactMultiplier));
 
+    // Mengekspos kecepatan maksimum dasar trolley untuk kalkulasi rasio tabrakan eksternal.
+    public float MaxSpeed => maxSpeed;
+
     // Menghitung rasio kecepatan saat ini terhadap kecepatan maksimum acuan (maxSpeed yang disesuaikan dengan berat).
     // LOGIC DI BALIK LAYAR: Menggunakan kecepatan dari variabel persistent (Forward & Sideway) dibanding dengan maxSpeed * WeightFactor.
     // Dibatasi antara 0 dan 1 (Mathf.Clamp01). Digunakan oleh UI, kontrol kemudi, dan detektor kerusakan (TrolleyCollisionHandler).
-    public float CurrentSpeedRatio => Mathf.Clamp01(new Vector2(currentSidewaySpeed, currentForwardSpeed).magnitude / (maxSpeed * WeightFactor));
+    public float CurrentSpeedRatio
+    {
+        get
+        {
+            float speedSqr = currentSidewaySpeed * currentSidewaySpeed + currentForwardSpeed * currentForwardSpeed;
+            float targetMaxSpeed = maxSpeed * WeightFactor;
+            if (targetMaxSpeed < 0.001f) return 0f;
+            return Mathf.Clamp01(Mathf.Sqrt(speedSqr) / targetMaxSpeed);
+        }
+    }
 
     private void Start()
     {
@@ -90,6 +106,9 @@ public class TrolleyController : MonoBehaviour
         {
             joystick = FindObjectOfType<FloatingJoystick>();
         }
+
+        // Jalankan Coroutine mandiri untuk menjaga agar troli tetap tegak lurus (X/Z = 0)
+        StartCoroutine(KeepUprightCoroutine());
     }
 
     private void FixedUpdate()
@@ -105,6 +124,8 @@ public class TrolleyController : MonoBehaviour
 
     /// <summary>
     /// Mengontrol akselerasi maju/mundur/kiri/kanan trolley relatif terhadap arah hadap saat ini.
+    /// Membagi area input joystick menjadi 4 sektor (Maju, Kanan, Mundur, Kiri) untuk mendeteksi
+    /// perubahan arah dan menyesuaikan tingkat pengereman (deceleration) agar kontrol terasa responsif.
     /// </summary>
     private void MoveTrolley(Vector2 input)
     {
@@ -112,31 +133,65 @@ public class TrolleyController : MonoBehaviour
         float weightFactor = WeightFactor;
 
         // 1. Tentukan target kecepatan lokal berdasarkan input joystick (X untuk menyamping, Y untuk maju/mundur)
-        //    LOGIC DI BALIK LAYAR: Top speed tidak lagi dikalikan dengan weightFactor, 
-        //    sehingga trolley tetap bisa mencapai kecepatan penuh (maxSpeed) meskipun memuat banyak barang.
         float targetForwardSpeed = input.y * maxSpeed;
         float targetSidewaySpeed = input.x * maxSpeed;
 
-        // 2. Akselerasi/Deselerasi sumbu Z Lokal (Maju - Mundur) secara persistent.
-        //    LOGIC DI BALIK LAYAR: Akselerasi dan deselerasi dikalikan dengan weightFactor.
-        //    Semakin berat beban barang, semakin lama waktu yang dibutuhkan trolley untuk berakselerasi 
-        //    ke top speed, dan semakin lama/jauh jarak rem yang dibutuhkan untuk berhenti (efek inersia).
-        if (Mathf.Abs(input.y) > inputDeadzone)
-        {
-            currentForwardSpeed = Mathf.MoveTowards(currentForwardSpeed, targetForwardSpeed, acceleration * weightFactor * Time.fixedDeltaTime);
-        }
-        else
-        {
-            currentForwardSpeed = Mathf.MoveTowards(currentForwardSpeed, 0f, deceleration * weightFactor * Time.fixedDeltaTime);
-        }
+        float activeRate = acceleration;
 
-        // 3. Akselerasi/Deselerasi sumbu X Lokal (Kiri - Kanan / Menyamping) secara persistent.
-        if (Mathf.Abs(input.x) > inputDeadzone)
+        if (input.sqrMagnitude > (inputDeadzone * inputDeadzone))
         {
-            currentSidewaySpeed = Mathf.MoveTowards(currentSidewaySpeed, targetSidewaySpeed, acceleration * weightFactor * Time.fixedDeltaTime);
+            float currentVelSqr = currentSidewaySpeed * currentSidewaySpeed + currentForwardSpeed * currentForwardSpeed;
+            if (currentVelSqr > 0.01f)
+            {
+                // Hitung sudut input joystick (0 di sumbu Y/maju, searah jarum jam)
+                float inputAngle = Mathf.Atan2(input.x, input.y) * Mathf.Rad2Deg;
+                if (inputAngle < 0) inputAngle += 360f;
+
+                int inputSector = 0;
+                if (inputAngle >= 315f || inputAngle < 45f) inputSector = 0; // Maju (Up)
+                else if (inputAngle >= 45f && inputAngle < 135f) inputSector = 1; // Kanan (Right)
+                else if (inputAngle >= 135f && inputAngle < 225f) inputSector = 2; // Mundur (Down)
+                else if (inputAngle >= 225f && inputAngle < 315f) inputSector = 3; // Kiri (Left)
+
+                // Hitung sudut arah pergerakan fisik saat ini
+                float moveAngle = Mathf.Atan2(currentSidewaySpeed, currentForwardSpeed) * Mathf.Rad2Deg;
+                if (moveAngle < 0) moveAngle += 360f;
+
+                int moveSector = 0;
+                if (moveAngle >= 315f || moveAngle < 45f) moveSector = 0; // Maju (Up)
+                else if (moveAngle >= 45f && moveAngle < 135f) moveSector = 1; // Kanan (Right)
+                else if (moveAngle >= 135f && moveAngle < 225f) moveSector = 2; // Mundur (Down)
+                else if (moveAngle >= 225f && moveAngle < 315f) moveSector = 3; // Kiri (Left)
+
+                // Hitung selisih sektor secara melingkar (0, 1, 2, atau 3)
+                int diff = Mathf.Abs(inputSector - moveSector);
+                if (diff > 2) diff = 4 - diff;
+
+                if (diff == 2)
+                {
+                    // Transisi berlawanan arah (180 derajat): gunakan rem penuh (deceleration)
+                    activeRate = deceleration;
+                }
+                else if (diff == 1)
+                {
+                    // Transisi berbelok tegak lurus (90 derajat): gunakan rem setengah (deceleration * 0.5f)
+                    activeRate = deceleration * 0.5f;
+                }
+                else
+                {
+                    // Arah yang sama (0 derajat): gunakan akselerasi normal
+                    activeRate = acceleration;
+                }
+            }
+
+            // Terapkan penambahan kecepatan menuju target dengan tingkat akselerasi/pengereman dinamis
+            currentForwardSpeed = Mathf.MoveTowards(currentForwardSpeed, targetForwardSpeed, activeRate * weightFactor * Time.fixedDeltaTime);
+            currentSidewaySpeed = Mathf.MoveTowards(currentSidewaySpeed, targetSidewaySpeed, activeRate * weightFactor * Time.fixedDeltaTime);
         }
         else
         {
+            // Tidak ada input joystick: rem normal menuju diam (0)
+            currentForwardSpeed = Mathf.MoveTowards(currentForwardSpeed, 0f, deceleration * weightFactor * Time.fixedDeltaTime);
             currentSidewaySpeed = Mathf.MoveTowards(currentSidewaySpeed, 0f, deceleration * weightFactor * Time.fixedDeltaTime);
         }
 
@@ -206,6 +261,55 @@ public class TrolleyController : MonoBehaviour
             // Metode ini memungkinkan mesin fisika menghitung interaksi tabrakan (collision) dengan baik sepanjang lintasan beloknya,
             // berbeda jika kita langsung memanipulasi transform.rotation secara mentah (teleportasi rotasi yang bisa menembus dinding).
             rb.MoveRotation(rb.rotation * turnRotation);
+        }
+    }
+
+    /// <summary>
+    /// Coroutine mandiri untuk menjaga agar troli tetap tegak lurus (rotation X & Z = 0).
+    /// Mengurangi beban pemrosesan di FixedUpdate/Update.
+    /// </summary>
+    private System.Collections.IEnumerator KeepUprightCoroutine()
+    {
+        // Cache yield instruction untuk mencegah alokasi GC (Garbage Collection) di Mobile WebGL
+        WaitForSeconds delay = rotationResetInterval > 0f ? new WaitForSeconds(rotationResetInterval) : null;
+
+        while (true)
+        {
+            ResetRotationXZ();
+
+            if (rotationResetInterval > 0f)
+            {
+                yield return delay;
+            }
+            else
+            {
+                yield return null; // Jika interval disetel <= 0, reset berjalan setiap frame (smooth)
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mereset rotasi X dan Z dari transform menjadi tepat 0 secara efisien.
+    /// Hanya melakukan write ke transform jika ada deviasi sudut (menghindari CPU overhead di WebGL).
+    /// </summary>
+    private void ResetRotationXZ()
+    {
+        Vector3 currentRot = transform.eulerAngles;
+        // PENTING: Gunakan Mathf.Approximately untuk mengecek deviasi float secara cepat tanpa overhead
+        if (!Mathf.Approximately(currentRot.x, 0f) || !Mathf.Approximately(currentRot.z, 0f))
+        {
+            currentRot.x = 0f;
+            currentRot.z = 0f;
+            transform.eulerAngles = currentRot;
+
+            // Jika Rigidbody masih memiliki sisa kecepatan sudut miring, hentikan agar rotasi fisik sinkron
+            if (rb != null && !rb.isKinematic)
+            {
+                Vector3 angularVel = rb.angularVelocity;
+                angularVel.x = 0f;
+                angularVel.z = 0f;
+                rb.angularVelocity = angularVel;
+            }
         }
     }
 }

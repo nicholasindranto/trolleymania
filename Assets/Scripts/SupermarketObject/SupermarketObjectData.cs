@@ -16,9 +16,11 @@ public class SupermarketObjectData : ScriptableObject
     [Tooltip("Berat fisik dari barang/objek.")]
     public float objWeight;
 
-    [Tooltip("Kategori dari objek (Goods untuk barang belanjaan, Weapon untuk persenjataan).")]
-    public ObjectKind kindOfObject;
+
 
     [Tooltip("Status awal bawaan objek saat pertama kali di-spawn.")]
     public ObjectStatus defaultStatus = ObjectStatus.Grounded;
+
+    [Tooltip("Ikon visual objek untuk ditampilkan di list UI (PUBG Mobile style).")]
+    public Sprite objIcon;
 }
