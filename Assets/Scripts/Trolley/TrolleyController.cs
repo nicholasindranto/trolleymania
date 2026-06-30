@@ -50,9 +50,13 @@ public class TrolleyController : MonoBehaviour
     [SerializeField] private float rotationResetInterval = 0.5f;
 
     // Variabel internal
-    private Rigidbody rb;
+    [SerializeField] private Rigidbody rb;
     private float currentForwardSpeed = 0f;
     private float currentSidewaySpeed = 0f;
+
+    // KODENYA TERSPESIALISASI: List untuk mencatat normal bidang kontak dari dinding/obstacle statis
+    // yang sedang ditabrak pada frame fisika saat ini (zero GC pressure karena di-clear tiap FixedUpdate).
+    private System.Collections.Generic.List<Vector3> activeWallNormals = new System.Collections.Generic.List<Vector3>();
 
     // Menampung akumulasi input geser horizontal (yaw) dari layar kanan selama satu frame.
     // Akumulasi dilakukan di Update() pada script kamera dan diterapkan serta di-reset di FixedUpdate() pada script ini.
@@ -91,8 +95,6 @@ public class TrolleyController : MonoBehaviour
 
     private void Start()
     {
-        rb = GetComponent<Rigidbody>();
-
         // Mengatur parameter Rigidbody agar sesuai dengan simulasi fisik trolley
         rb.useGravity = true;
         rb.drag = 0.1f; // Sedikit hambatan udara agar tidak seluncur tanpa henti
@@ -113,6 +115,14 @@ public class TrolleyController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        // KODENYA TERSPESIALISASI: Jika game masih loading, hentikan pergerakan troli secara instan
+        if (ObjectiveManager.IsLoading)
+        {
+            ForceStopSpeed();
+            activeWallNormals.Clear();
+            return;
+        }
+
         if (joystick == null) return;
 
         // Ambil input arah dari joystick (X untuk kiri-kanan, Y untuk maju-mundur)
@@ -120,6 +130,36 @@ public class TrolleyController : MonoBehaviour
 
         MoveTrolley(input);
         RotateTrolley();
+
+        // KODENYA TERSPESIALISASI: Bersihkan list normal kontak setelah pergerakan selesai diproses
+        // agar data dari OnCollisionStay frame ini siap direkam untuk frame berikutnya.
+        activeWallNormals.Clear();
+    }
+
+    /// <summary>
+    /// Mencatat normal dari kontak tabrakan dinding/obstacle yang dideteksi oleh TrolleyCollisionHandler.
+    /// </summary>
+    public void RegisterWallContact(Vector3 normal)
+    {
+        // Jangan tambahkan jika sudah ada normal yang sangat mirip untuk mencegah list membengkak
+        for (int i = 0; i < activeWallNormals.Count; i++)
+        {
+            if (Vector3.Dot(activeWallNormals[i], normal) > 0.99f) return;
+        }
+        activeWallNormals.Add(normal);
+    }
+
+    /// <summary>
+    /// Menghentikan seluruh kecepatan gerak trolley secara instan (misal saat menabrak dinding).
+    /// </summary>
+    public void ForceStopSpeed()
+    {
+        currentForwardSpeed = 0f;
+        currentSidewaySpeed = 0f;
+        if (rb != null)
+        {
+            rb.velocity = new Vector3(0f, rb.velocity.y, 0f);
+        }
     }
 
     /// <summary>
@@ -135,6 +175,35 @@ public class TrolleyController : MonoBehaviour
         // 1. Tentukan target kecepatan lokal berdasarkan input joystick (X untuk menyamping, Y untuk maju/mundur)
         float targetForwardSpeed = input.y * maxSpeed;
         float targetSidewaySpeed = input.x * maxSpeed;
+
+        // KODENYA TERSPESIALISASI: Cek apakah input joystick mengarahkan trolley ke arah dalam dinding
+        if (activeWallNormals.Count > 0 && input.sqrMagnitude > (inputDeadzone * inputDeadzone))
+        {
+            // Konversi target pergerakan lokal ke arah dunia (World Space)
+            Vector3 worldTargetDir = (transform.forward * targetForwardSpeed) + (transform.right * targetSidewaySpeed);
+            
+            for (int i = 0; i < activeWallNormals.Count; i++)
+            {
+                // Jika dot product antara arah target pergerakan dan normal permukaan dinding bernilai negatif (< -0.05f),
+                // itu berarti pemain mencoba mengemudikan trolley MENUJU/MENEMBUS dinding.
+                if (Vector3.Dot(worldTargetDir.normalized, activeWallNormals[i]) < -0.05f)
+                {
+                    // Paksa target kecepatan ke 0 agar trolley tidak terus menekan dinding
+                    targetForwardSpeed = 0f;
+                    targetSidewaySpeed = 0f;
+                    
+                    // Juga langsung nol-kan kecepatan saat ini agar tidak berlanjut meluncur
+                    currentForwardSpeed = 0f;
+                    currentSidewaySpeed = 0f;
+                    
+                    if (rb != null)
+                    {
+                        rb.velocity = new Vector3(0f, rb.velocity.y, 0f);
+                    }
+                    break;
+                }
+            }
+        }
 
         float activeRate = acceleration;
 

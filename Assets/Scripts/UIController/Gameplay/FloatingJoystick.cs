@@ -31,9 +31,9 @@ public class FloatingJoystick : MonoBehaviour, IPointerDownHandler, IDragHandler
     /// Property publik agar script lain (seperti script pergerakan karakter) 
     /// bisa membaca arah pergerakan joystick secara real-time.
     /// </summary>
-    public Vector2 Direction => input;
-    public float Horizontal => input.x;
-    public float Vertical => input.y;
+    public Vector2 Direction => ObjectiveManager.IsLoading ? Vector2.zero : input;
+    public float Horizontal => ObjectiveManager.IsLoading ? 0f : input.x;
+    public float Vertical => ObjectiveManager.IsLoading ? 0f : input.y;
 
     private void Start()
     {
@@ -57,6 +57,9 @@ public class FloatingJoystick : MonoBehaviour, IPointerDownHandler, IDragHandler
     /// </summary>
     public void OnPointerDown(PointerEventData eventData)
     {
+        // KODENYA TERSPESIALISASI: Blokir sentuhan joystick jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (background == null || handle == null) return;
 
         // Ubah posisi sentuhan layar ke koordinat World Space di Canvas.
@@ -92,6 +95,9 @@ public class FloatingJoystick : MonoBehaviour, IPointerDownHandler, IDragHandler
     /// </summary>
     public void OnDrag(PointerEventData eventData)
     {
+        // KODENYA TERSPESIALISASI: Blokir gerakan joystick jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (background == null || handle == null) return;
 
         // 1. Dapatkan posisi jari saat ini relatif terhadap pusat Joystick Background.
@@ -134,6 +140,9 @@ public class FloatingJoystick : MonoBehaviour, IPointerDownHandler, IDragHandler
     /// </summary>
     public void OnPointerUp(PointerEventData eventData)
     {
+        // KODENYA TERSPESIALISASI: Blokir pelepasan joystick jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (background == null || handle == null) return;
 
         // Kembalikan posisi background joystick ke posisi default-nya semula (-170, -230)

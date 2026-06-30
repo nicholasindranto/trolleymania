@@ -52,23 +52,24 @@ public class ObjectiveManager : MonoBehaviour
     [Tooltip("Ketebalan highlight garis tepi (outline) untuk barang belanjaan.")]
     [SerializeField] private float highlightWidth = 4f;
 
-    [Header("UI Preview References")]
-    [Tooltip("GameObject Text untuk nama Goods 1.")]
-    [SerializeField] private GameObject goods1NameText;
-    [Tooltip("GameObject Text untuk progres/jumlah Goods 1.")]
-    [SerializeField] private GameObject goods1ProgressText;
-
-    [Tooltip("GameObject Text untuk nama Goods 2.")]
-    [SerializeField] private GameObject goods2NameText;
-    [Tooltip("GameObject Text untuk progres/jumlah Goods 2.")]
-    [SerializeField] private GameObject goods2ProgressText;
-
     [Header("UI List References")]
     [Tooltip("Panel latar belakang dari seluruh shopping list (BGListObjective).")]
     [SerializeField] private GameObject bgListObjective;
 
     [Tooltip("GameObject Text di dalam panel list untuk mencetak seluruh daftar barang belanjaan.")]
     [SerializeField] private GameObject listText;
+
+    [Header("Loading Screen Settings")]
+    [Tooltip("Panel UI Loading Screen (LoadingScreen).")]
+    [SerializeField] private GameObject loadingScreenPanel;
+
+    [Tooltip("Image UI Bar Loading (BG/Bar).")]
+    [SerializeField] private UnityEngine.UI.Image loadingBarImage;
+
+    /// <summary>
+    /// Menandakan apakah game sedang dalam proses loading (spawn barang di awal).
+    /// </summary>
+    public static bool IsLoading { get; private set; } = true;
 
     // Cache komponen teks untuk menghindari GetComponent runtime
     private TMPro.TextMeshProUGUI goods1NameTMP;
@@ -88,6 +89,9 @@ public class ObjectiveManager : MonoBehaviour
 
     private void Awake()
     {
+        // PENTING: Inisialisasi status loading
+        IsLoading = true;
+
         // PENTING: Setel ulang timeScale ke 1.0f setiap kali scene di-load. 
         // Ini mencegah game tetap ter-pause ketika scene di-restart dari menu 'PlayAgain'.
         Time.timeScale = 1f;
@@ -115,6 +119,28 @@ public class ObjectiveManager : MonoBehaviour
                 {
                     bgListObjective = targetTrans.gameObject;
                     Debug.Log("[ObjectiveManager] Berhasil mendeteksi bgListObjective secara otomatis: " + bgListObjective.name);
+                }
+            }
+        }
+
+        // KODENYA TERSPESIALISASI: Deteksi otomatis LoadingScreen di Canvas jika referensi kosong
+        if (loadingScreenPanel == null)
+        {
+            Canvas canvas = FindObjectOfType<Canvas>();
+            if (canvas != null)
+            {
+                Transform targetTrans = FindChildRecursive(canvas.transform, "LoadingScreen");
+                if (targetTrans != null)
+                {
+                    loadingScreenPanel = targetTrans.gameObject;
+                    Debug.Log("[ObjectiveManager] Berhasil mendeteksi loadingScreenPanel secara otomatis: " + loadingScreenPanel.name);
+                    
+                    Transform barTrans = FindChildRecursive(targetTrans, "Bar");
+                    if (barTrans != null)
+                    {
+                        loadingBarImage = barTrans.GetComponent<UnityEngine.UI.Image>();
+                        Debug.Log("[ObjectiveManager] Berhasil mendeteksi loadingBarImage secara otomatis.");
+                    }
                 }
             }
         }
@@ -178,26 +204,6 @@ public class ObjectiveManager : MonoBehaviour
     /// </summary>
     private void CacheTextComponents()
     {
-        if (goods1NameText != null)
-        {
-            goods1NameTMP = goods1NameText.GetComponent<TMPro.TextMeshProUGUI>();
-            if (goods1NameTMP == null) goods1NameLegacy = goods1NameText.GetComponent<UnityEngine.UI.Text>();
-        }
-        if (goods1ProgressText != null)
-        {
-            goods1ProgressTMP = goods1ProgressText.GetComponent<TMPro.TextMeshProUGUI>();
-            if (goods1ProgressTMP == null) goods1ProgressLegacy = goods1ProgressText.GetComponent<UnityEngine.UI.Text>();
-        }
-        if (goods2NameText != null)
-        {
-            goods2NameTMP = goods2NameText.GetComponent<TMPro.TextMeshProUGUI>();
-            if (goods2NameTMP == null) goods2NameLegacy = goods2NameText.GetComponent<UnityEngine.UI.Text>();
-        }
-        if (goods2ProgressText != null)
-        {
-            goods2ProgressTMP = goods2ProgressText.GetComponent<TMPro.TextMeshProUGUI>();
-            if (goods2ProgressTMP == null) goods2ProgressLegacy = goods2ProgressText.GetComponent<UnityEngine.UI.Text>();
-        }
         if (listText != null)
         {
             listTMP = listText.GetComponent<TMPro.TextMeshProUGUI>();
@@ -304,6 +310,16 @@ public class ObjectiveManager : MonoBehaviour
     /// </summary>
     private IEnumerator SpawnObjectsSlowly(List<GameObject> requiredSpawns)
     {
+        // Aktifkan panel Loading Screen di awal
+        if (loadingScreenPanel != null)
+        {
+            loadingScreenPanel.SetActive(true);
+        }
+        if (loadingBarImage != null)
+        {
+            loadingBarImage.fillAmount = 0f;
+        }
+
         if (bgListObjective != null)
         {
             bgListObjective.SetActive(false);
@@ -371,6 +387,12 @@ public class ObjectiveManager : MonoBehaviour
                 }
             }
 
+            // KODENYA TERSPESIALISASI: Perbarui fill amount loading bar seiring dengan progress spawn objek
+            if (loadingBarImage != null)
+            {
+                loadingBarImage.fillAmount = (float)(i + 1) / totalSpawnPoints;
+            }
+
             // Berikan jeda frame agar CPU dapat bernapas
             yield return new WaitForSeconds(spawnDelay);
         }
@@ -380,6 +402,21 @@ public class ObjectiveManager : MonoBehaviour
 
         // Perbarui sorotan visual (highlight) awal pada barang-barang belanjaan
         UpdateObjectHighlights();
+
+        // KODENYA TERSPESIALISASI: Matikan loading screen dan aktifkan input game
+        IsLoading = false;
+        if (loadingScreenPanel != null)
+        {
+            loadingScreenPanel.SetActive(false);
+            Debug.Log("[ObjectiveManager] Loading selesai, Loading Screen dinonaktifkan.");
+        }
+
+        // KODENYA TERSPESIALISASI: Trigger refresh UI barang terdekat setelah loading selesai
+        NearbyItemsController nearby = FindObjectOfType<NearbyItemsController>();
+        if (nearby != null)
+        {
+            nearby.RefreshUI();
+        }
     }
 
     /// <summary>
@@ -429,6 +466,9 @@ public class ObjectiveManager : MonoBehaviour
     /// </summary>
     public void ToggleBGListObjective()
     {
+        // KODENYA TERSPESIALISASI: Blokir buka list belanjaan jika game masih loading
+        if (IsLoading) return;
+
         if (bgListObjective != null)
         {
             bgListObjective.SetActive(!bgListObjective.activeSelf);
@@ -566,30 +606,6 @@ public class ObjectiveManager : MonoBehaviour
         List<ObjectiveItem> sortedDisplay = new List<ObjectiveItem>();
         sortedDisplay.AddRange(incomplete);
         sortedDisplay.AddRange(completed);
-
-        // 4. Update Slot 1
-        if (sortedDisplay.Count >= 1)
-        {
-            SetText(goods1NameText, sortedDisplay[0].itemName);
-            SetText(goods1ProgressText, $"({sortedDisplay[0].currentAmount}/{sortedDisplay[0].requiredAmount})");
-        }
-        else
-        {
-            SetText(goods1NameText, "-");
-            SetText(goods1ProgressText, "(0/0)");
-        }
-
-        // 5. Update Slot 2
-        if (sortedDisplay.Count >= 2)
-        {
-            SetText(goods2NameText, sortedDisplay[1].itemName);
-            SetText(goods2ProgressText, $"({sortedDisplay[1].currentAmount}/{sortedDisplay[1].requiredAmount})");
-        }
-        else
-        {
-            SetText(goods2NameText, "-");
-            SetText(goods2ProgressText, "(0/0)");
-        }
     }
 
     /// <summary>
@@ -620,11 +636,7 @@ public class ObjectiveManager : MonoBehaviour
     {
         if (go == null) return;
 
-        if (go == goods1NameText) SetTextCached(go, content, goods1NameTMP, goods1NameLegacy);
-        else if (go == goods1ProgressText) SetTextCached(go, content, goods1ProgressTMP, goods1ProgressLegacy);
-        else if (go == goods2NameText) SetTextCached(go, content, goods2NameTMP, goods2NameLegacy);
-        else if (go == goods2ProgressText) SetTextCached(go, content, goods2ProgressTMP, goods2ProgressLegacy);
-        else if (go == listText) SetTextCached(go, content, listTMP, listLegacy);
+        if (go == listText) SetTextCached(go, content, listTMP, listLegacy);
         else
         {
             // Fallback jika memanggil game object non-default

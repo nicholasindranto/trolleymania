@@ -32,9 +32,6 @@ public class HUDController : MonoBehaviour
     [Tooltip("Image UI Crosshair untuk efek bidikan (fade in/out).")]
     [SerializeField] private Image crosshairImage;
 
-    [Tooltip("Masker Layer fisik untuk target bidikan lemparan.")]
-    [SerializeField] private LayerMask throwAimMask = ~0;
-
     [Header("Settings")]
     [Tooltip("Kecepatan gerak linear objek saat melayang menuju titik spawn.")]
     [SerializeField] private float grabMoveSpeed = 8f;
@@ -106,6 +103,9 @@ public class HUDController : MonoBehaviour
     /// </summary>
     public void GrabObject(ObjectScript targetObjScript)
     {
+        // KODENYA TERSPESIALISASI: Blokir pengambilan objek jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (targetObjScript == null) return;
 
         GameObject targetObj = targetObjScript.gameObject;
@@ -135,6 +135,9 @@ public class HUDController : MonoBehaviour
     /// </summary>
     public void EquipItemFromInventory(ObjectScript targetObjScript)
     {
+        // KODENYA TERSPESIALISASI: Blokir equip barang jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (targetObjScript == null) return;
 
         // 1. Jika player sudah memegang sesuatu di tangannya
@@ -206,6 +209,9 @@ public class HUDController : MonoBehaviour
     /// </summary>
     public void OnThrowButtonPointerDown()
     {
+        // KODENYA TERSPESIALISASI: Blokir inisiasi bidikan jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (equippedWeapon == null) return;
 
         // Fade in crosshair
@@ -217,6 +223,9 @@ public class HUDController : MonoBehaviour
     /// </summary>
     public void OnThrowButtonPointerUp()
     {
+        // KODENYA TERSPESIALISASI: Blokir lemparan jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (equippedWeapon == null) return;
 
         // Lakukan lemparan fisik menuju crosshair
@@ -309,31 +318,32 @@ public class HUDController : MonoBehaviour
                 rb.velocity = Vector3.zero;
                 rb.angularVelocity = Vector3.zero;
 
-                // LOGIC DI BALIK LAYAR (Arah Lemparan Menggunakan ScreenToWorldPoint):
-                // Mengambil koordinat posisi crosshair UI secara dinamis.
+                // KODENYA TERSPESIALISASI: Arah lemparan dihitung langsung berdasarkan garis pandang crosshair di layar
+                // menggunakan ScreenToWorldPoint untuk mendapatkan arah vektor ke dunia 3D yang tepat,
+                // sehingga lemparan selalu presisi ke arah crosshair berada (bahkan jika crosshair berpindah posisi).
                 Vector2 aimScreenPos = (crosshairImage != null) 
                     ? (Vector2)crosshairImage.transform.position 
                     : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
 
-                Vector3 targetWorldPos;
+                Vector3 throwDir;
                 if (mainCamera != null)
                 {
-                    // Proyeksikan koordinat layar crosshair ke dunia 3D (Z = 20f untuk menentukan jarak kedalaman virtual)
-                    targetWorldPos = mainCamera.ScreenToWorldPoint(new Vector3(aimScreenPos.x, aimScreenPos.y, 20f));
+                    // Ambil titik proyeksi dekat dan titik proyeksi jauh pada sumbu Z pandangan kamera
+                    Vector3 nearPoint = mainCamera.ScreenToWorldPoint(new Vector3(aimScreenPos.x, aimScreenPos.y, mainCamera.nearClipPlane + 0.1f));
+                    Vector3 farPoint = mainCamera.ScreenToWorldPoint(new Vector3(aimScreenPos.x, aimScreenPos.y, 20f));
+                    throwDir = (farPoint - nearPoint).normalized;
                 }
                 else
                 {
                     // Fallback jika kamera utama tidak terpasang
-                    targetWorldPos = weaponToThrow.transform.position + (playerTransform != null ? playerTransform.forward : Vector3.forward) * 20f;
+                    throwDir = (playerTransform != null ? playerTransform.forward : Vector3.forward);
                 }
 
-                // Kalkulasi arah dari posisi awal pelepasan senjata menuju target world pos dari crosshair tersebut
-                Vector3 throwDir = (targetWorldPos - weaponToThrow.transform.position).normalized;
                 Vector3 finalForce = throwDir * throwForce;
 
                 // Terapkan gaya impuls instan (ForceMode.Impulse)
                 rb.AddForce(finalForce, ForceMode.Impulse);
-                Debug.Log($"[HUDController] Object '{weaponToThrow.name}' dilempar ke target world {targetWorldPos} dengan arah {throwDir} dan gaya {throwForce}.");
+                Debug.Log($"[HUDController] Object '{weaponToThrow.name}' dilempar ke arah crosshair {throwDir} dengan gaya {throwForce}.");
             }
 
             // Perbarui status tombol throw
@@ -500,6 +510,9 @@ public class HUDController : MonoBehaviour
     /// </summary>
     public void PauseGame()
     {
+        // KODENYA TERSPESIALISASI: Blokir pause game jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (bgPausePanel != null)
         {
             bgPausePanel.SetActive(true);

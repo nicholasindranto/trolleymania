@@ -42,7 +42,7 @@ public class MainMenuController : MonoBehaviour
         // Memastikan waktu berjalan normal sebelum memuat scene baru
         Time.timeScale = 1f;
         
-        SceneManager.LoadScene(gameplaySceneName);
+        SceneManager.LoadSceneAsync(gameplaySceneName);
     }
 
     /// <summary>

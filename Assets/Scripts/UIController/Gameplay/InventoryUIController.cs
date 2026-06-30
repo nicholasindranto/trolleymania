@@ -74,6 +74,9 @@ public class InventoryUIController : MonoBehaviour
     /// </summary>
     public void ToggleInventory()
     {
+        // KODENYA TERSPESIALISASI: Blokir pembukaan panel inventory jika game masih loading
+        if (ObjectiveManager.IsLoading) return;
+
         if (mainPanel == null) return;
 
         bool nextState = !mainPanel.activeSelf;

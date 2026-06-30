@@ -63,6 +63,13 @@ public class TouchCameraController : MonoBehaviour
 
     private void Update()
     {
+        // KODENYA TERSPESIALISASI: Blokir seluruh input kamera jika game masih loading
+        if (ObjectiveManager.IsLoading)
+        {
+            activeTouchId = -1;
+            return;
+        }
+
         // LOGIC DI BALIK LAYAR:
         // Jika game sedang di-pause atau pemain sudah menang (ditandai dengan Time.timeScale = 0),
         // kita skip seluruh pembacaan input sentuhan dan pemrosesan rotasi kamera.
@@ -118,9 +125,12 @@ public class TouchCameraController : MonoBehaviour
     /// </summary>
     private void HandleTouchInput()
     {
-        // Iterasi semua sentuhan jari yang terdeteksi di layar
-        foreach (Touch touch in Input.touches)
+        // Iterasi semua sentuhan jari yang terdeteksi di layar secara zero-alloc
+        int touchCount = Input.touchCount;
+        for (int i = 0; i < touchCount; i++)
         {
+            Touch touch = Input.GetTouch(i);
+            
             // 1. Deteksi awal sentuhan (TouchPhase.Began)
             if (touch.phase == TouchPhase.Began)
             {

@@ -68,6 +68,13 @@ public class NearbyItemsController : MonoBehaviour
     /// </summary>
     public void RefreshUI()
     {
+        // KODENYA TERSPESIALISASI: Sembunyikan panel nearby items jika game masih loading
+        if (ObjectiveManager.IsLoading)
+        {
+            if (mainPanel != null) mainPanel.SetActive(false);
+            return;
+        }
+
         if (interactController == null || contentContainer == null || itemButtonPrefab == null)
         {
             if (mainPanel != null) mainPanel.SetActive(false);
@@ -76,13 +83,7 @@ public class NearbyItemsController : MonoBehaviour
 
         int candidateCount = interactController.CandidateCount;
 
-        // 1. Tampilkan atau sembunyikan panel utama berdasarkan ketersediaan barang di sekitar
-        if (mainPanel != null)
-        {
-            mainPanel.SetActive(candidateCount > 0);
-        }
-
-        // 2. Nonaktifkan semua tombol aktif yang ada di pool terlebih dahulu (daur ulang)
+        // 1. Nonaktifkan semua tombol aktif yang ada di pool terlebih dahulu (daur ulang)
         for (int i = 0; i < buttonPool.Count; i++)
         {
             if (buttonPool[i] != null)
@@ -91,18 +92,20 @@ public class NearbyItemsController : MonoBehaviour
             }
         }
 
-        // 3. Render tombol baru dari data kandidat aktif menggunakan pool
+        // 2. Render tombol baru dari data kandidat aktif menggunakan pool yang berstatus Grounded
+        int activeRenderCount = 0;
         for (int i = 0; i < candidateCount; i++)
         {
             ObjectScript candidateScript = interactController.GetCandidateObjectScript(i);
-            if (candidateScript == null) continue;
+            // KODENYA TERSPESIALISASI: Filter ketat agar hanya mendeteksi dan menampilkan objek Grounded (di luar trolley)
+            if (candidateScript == null || candidateScript.Status != ObjectStatus.Grounded) continue;
 
             NearbyItemButton buttonInstance;
 
             // Gunakan tombol yang sudah ada di pool jika tersedia
-            if (i < buttonPool.Count)
+            if (activeRenderCount < buttonPool.Count)
             {
-                buttonInstance = buttonPool[i];
+                buttonInstance = buttonPool[activeRenderCount];
             }
             else
             {
@@ -117,7 +120,14 @@ public class NearbyItemsController : MonoBehaviour
                 // Tangkap referensi candidateScript lokal ke closure untuk WebGL safety
                 ObjectScript currentItem = candidateScript;
                 buttonInstance.Initialize(currentItem, () => hudController.GrabObject(currentItem), defaultItemIcon);
+                activeRenderCount++;
             }
+        }
+
+        // 3. Tampilkan atau sembunyikan panel utama berdasarkan ketersediaan barang GROUNDED di sekitar
+        if (mainPanel != null)
+        {
+            mainPanel.SetActive(activeRenderCount > 0);
         }
     }
 }

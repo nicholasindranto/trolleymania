@@ -8,9 +8,7 @@ using UnityEngine;
 [RequireComponent(typeof(TrolleyController))]
 public class TrolleyCollisionHandler : MonoBehaviour
 {
-    [Header("NPC Speed Settings")]
-    [Tooltip("Kecepatan maksimum dari Trolley NPC. Digunakan untuk menghitung rasio kecepatan NPC.")]
-    [SerializeField] private float npcMaxSpeed = 8f;
+    // Kecepatan maksimum NPC sekarang dideteksi dinamis dari NPCController.MaxSpeed untuk mendukung preset yang berbeda-beda.
 
     [Header("Damage Settings")]
     [Tooltip("Jumlah pengurangan durabilitas trolley saat menabrak dinding pada kecepatan tinggi.")]
@@ -66,6 +64,22 @@ public class TrolleyCollisionHandler : MonoBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
+        GameObject otherObj = collision.gameObject;
+
+        // KODENYA TERSPESIALISASI: Ketika menabrak dinding, langsung hentikan kecepatan secara fisik
+        // dan daftarkan normal kontak untuk memblokir pergerakan ke arah dinding tersebut.
+        if (otherObj.CompareTag(wallTag))
+        {
+            if (playerTrolleyController != null)
+            {
+                playerTrolleyController.ForceStopSpeed();
+                for (int i = 0; i < collision.contacts.Length; i++)
+                {
+                    playerTrolleyController.RegisterWallContact(collision.contacts[i].normal);
+                }
+            }
+        }
+
         // LOGIC DI BALIK LAYAR (Pencegahan Jitter Damage):
         // Jika belum melewati masa cooldown dari damage sebelumnya, kita langsung return/skip.
         // Ini mencegah HP/Durabilitas langsung terkuras habis ketika trolley menabrak dan bergeser (jitter/slide)
@@ -79,17 +93,16 @@ public class TrolleyCollisionHandler : MonoBehaviour
         // Unity mengirimkan data tabrakan beserta titik kontak fisik (contacts). 
         // Melalui kontak pertama, kita dapat memeriksa collider mana dari model compound kita 
         // (apakah player atau keranjang belanja) yang pertama kali menerima benturan.
-        if (collision.contacts.Length == 0) return;
+        if (collision.contactCount == 0) return;
 
-        Collider thisCollider = collision.contacts[0].thisCollider;
-        GameObject otherObj = collision.gameObject;
+        Collider thisCollider = collision.GetContact(0).thisCollider;
 
         // LOGIC DI BALIK LAYAR (Pencegahan Durabilitas Berkurang Saat Menyerempet/Mengepot Dinding):
         // Menggunakan relativeVelocity diproyeksikan (Dot Product) ke normal kontak tabrakan.
         // Ini mengukur seberapa cepat objek menabrak secara tegak lurus (impact force nyata).
         // Jika hanya menyerempet/slide sejajar dinding, kecepatan relatif di sumbu normal akan mendekati 0,
         // sehingga tidak akan sengaja memicu pengurangan HP/durabilitas meskipun player melaju kencang (full speed).
-        Vector3 collisionNormal = collision.contacts[0].normal;
+        Vector3 collisionNormal = collision.GetContact(0).normal;
         float impactSpeed = Mathf.Abs(Vector3.Dot(collision.relativeVelocity, collisionNormal));
 
         // Hitung kecepatan maksimal acuan player saat ini (disesuaikan berat beban cargo)
@@ -106,7 +119,7 @@ public class TrolleyCollisionHandler : MonoBehaviour
             // KONDISI A: Player ditabrak oleh NPC (Trolley NPC maupun Karakter NPC itu sendiri)
             if (otherObj.CompareTag(npcTrolleyTag) || otherObj.CompareTag(npcTag))
             {
-                float speedRatio = impactSpeed / npcMaxSpeed;
+                float speedRatio = impactSpeed / GetNpcMaxSpeed(otherObj);
 
                 if (speedRatio >= damageSpeedRatioThreshold)
                 {
@@ -169,7 +182,7 @@ public class TrolleyCollisionHandler : MonoBehaviour
             else if (otherObj.CompareTag(npcTrolleyTag) || otherObj.CompareTag(npcTag))
             {
                 // Gunakan kecepatan maksimal tertinggi sebagai acuan rasio benturan
-                float maxAcuanSpeed = Mathf.Max(npcMaxSpeed, currentMaxSpeed);
+                float maxAcuanSpeed = Mathf.Max(GetNpcMaxSpeed(otherObj), currentMaxSpeed);
                 float speedRatio = impactSpeed / maxAcuanSpeed;
 
                 if (speedRatio >= damageSpeedRatioThreshold)
@@ -187,6 +200,40 @@ public class TrolleyCollisionHandler : MonoBehaviour
                 }
             }
         }
+    }
+
+    private void OnCollisionStay(Collision collision)
+    {
+        // KODENYA TERSPESIALISASI: Selama menyentuh dinding, daftarkan normal kontak secara kontinu
+        // agar TrolleyController tahu dinding mana yang menghalangi pergerakan ke depan.
+        if (collision.gameObject.CompareTag(wallTag))
+        {
+            if (playerTrolleyController != null)
+            {
+                int contactCount = collision.contactCount;
+                for (int i = 0; i < contactCount; i++)
+                {
+                    playerTrolleyController.RegisterWallContact(collision.GetContact(i).normal);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mendapatkan kecepatan maksimum dari NPCController secara dinamis berdasarkan objek tabrakan.
+    /// </summary>
+    private float GetNpcMaxSpeed(GameObject npcObj)
+    {
+        NPCController npcCtrl = npcObj.GetComponent<NPCController>();
+        if (npcCtrl == null) npcCtrl = npcObj.GetComponentInParent<NPCController>();
+        if (npcCtrl == null) npcCtrl = npcObj.GetComponentInChildren<NPCController>();
+
+        if (npcCtrl != null)
+        {
+            return npcCtrl.MaxSpeed;
+        }
+
+        return 8f; // Fallback default
     }
 
     /// <summary>

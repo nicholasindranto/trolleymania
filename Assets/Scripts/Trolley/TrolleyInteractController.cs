@@ -117,6 +117,17 @@ public class TrolleyInteractController : MonoBehaviour
     }
 
     /// <summary>
+    /// Memaksa pembersihan kandidat Taken/null dan memperbarui UI nearby items secara instan.
+    /// Dipanggil dari luar (misal oleh TrolleyAreaDetector saat barang masuk ke dalam trolley).
+    /// </summary>
+    public void RefreshCandidates()
+    {
+        CleanupCandidates();
+        UpdateClosestCandidate();
+        OnCandidatesChanged?.Invoke();
+    }
+
+    /// <summary>
     /// Mencoba mendaftarkan kembali objek secara manual ke dalam list highlight (misalnya jika objek keluar dari keranjang
     /// dan ternyata fisiknya masih berada di dalam area jangkauan interaksi tangan).
     /// </summary>

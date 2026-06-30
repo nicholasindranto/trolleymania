@@ -74,6 +74,17 @@ public class TrolleyAreaDetector : MonoBehaviour
                     OnTrolleyItemsChanged?.Invoke();
                 }
 
+                // KODENYA TERSPESIALISASI: Segera perbarui daftar kandidat di TrolleyInteractController
+                // agar item yang baru saja Taken langsung disembunyikan dari UI NearbyItems.
+                if (trolleyController != null)
+                {
+                    TrolleyInteractController interactController = trolleyController.GetComponentInChildren<TrolleyInteractController>();
+                    if (interactController != null)
+                    {
+                        interactController.RefreshCandidates();
+                    }
+                }
+
                 // Tambahkan berat barang ke total berat di TrolleyController
                 if (trolleyController != null)
                 {

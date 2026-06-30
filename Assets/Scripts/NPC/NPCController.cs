@@ -124,7 +124,8 @@ public class NPCController : MonoBehaviour
     private int currentWaypointIndex = 0;
 
     // Cache koordinat sudut rute (Path Caching - Menghindari per-frame pathfinding)
-    private Vector3[] pathCorners;
+    private Vector3[] pathCornersBuffer = new Vector3[64];
+    private int pathCornersCount = 0;
     private int currentCornerIndex = 0;
 
     // Cache kuadrat toleransi untuk efisiensi perbandingan tanpa Sqrt (Mobile WebGL optimization)
@@ -161,6 +162,8 @@ public class NPCController : MonoBehaviour
     private Vector3 lastPosition;
     private float stuckTimer = 0f;
     private int stuckRecalculateCount = 0;
+
+    public float MaxSpeed => maxSpeed;
 
     private void Start()
     {
@@ -221,6 +224,13 @@ public class NPCController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        // KODENYA TERSPESIALISASI: Jika game masih loading, rem trolley NPC dan matikan logika
+        if (ObjectiveManager.IsLoading)
+        {
+            DecelerateTrolley();
+            return;
+        }
+
         // OPTIMALISASI FISIKA WEBGL:
         // Jika NPC sedang dalam kondisi KO (Knockout), hentikan seluruh logika AI dan navigasi
         // agar tidak membebani komputasi CPU dan membiarkan simulasi fisika ragdoll berjalan penuh.
@@ -276,6 +286,14 @@ public class NPCController : MonoBehaviour
     {
         if (isKO) yield break;
 
+        // KODENYA TERSPESIALISASI: Jika game masih loading, tunggu hingga loading selesai sebelum memproses AI
+        if (ObjectiveManager.IsLoading)
+        {
+            yield return aiUpdateDelay;
+            StartCoroutine(AILoop());
+            yield break;
+        }
+
         if (!isStunned && !isWaiting && waypointsList.Count > 0)
         {
             Transform targetWaypoint = waypointsList[currentWaypointIndex];
@@ -314,14 +332,14 @@ public class NPCController : MonoBehaviour
     /// </summary>
     private void UpdatePathFollowing()
     {
-        if (pathCorners == null || pathCorners.Length == 0 || currentCornerIndex >= pathCorners.Length)
+        if (pathCornersCount == 0 || currentCornerIndex >= pathCornersCount)
         {
             Transform targetWaypoint = waypointsList[currentWaypointIndex];
             CalculatePathToTarget(targetWaypoint.position);
             return;
         }
 
-        Vector3 targetCorner = pathCorners[currentCornerIndex];
+        Vector3 targetCorner = pathCornersBuffer[currentCornerIndex];
 
         // Deteksi kedatangan di sudut rute saat ini
         float sqrDistanceToCorner = (transform.position - targetCorner).sqrMagnitude;
@@ -329,12 +347,12 @@ public class NPCController : MonoBehaviour
         {
             currentCornerIndex++;
             stuckRecalculateCount = 0;
-            if (currentCornerIndex >= pathCorners.Length)
+            if (currentCornerIndex >= pathCornersCount)
             {
                 currentMoveDirection = Vector3.zero;
                 return;
             }
-            targetCorner = pathCorners[currentCornerIndex];
+            targetCorner = pathCornersBuffer[currentCornerIndex];
         }
 
         // Deteksi Stuck (kalkulasi jarak tempuh sejak interval pembaruan terakhir)
@@ -515,11 +533,11 @@ public class NPCController : MonoBehaviour
 
         if (navPath.status == NavMeshPathStatus.PathComplete || navPath.status == NavMeshPathStatus.PathPartial)
         {
-            pathCorners = navPath.corners;
+            pathCornersCount = navPath.GetCornersNonAlloc(pathCornersBuffer);
             currentCornerIndex = 0;
 
             // Lewati titik index 0 karena itu biasanya adalah titik start (posisi NPC saat ini)
-            if (pathCorners != null && pathCorners.Length > 1)
+            if (pathCornersCount > 1)
             {
                 currentCornerIndex = 1;
             }
@@ -529,7 +547,7 @@ public class NPCController : MonoBehaviour
 #if UNITY_EDITOR
             Debug.LogWarning($"[NPCController] NPC '{gameObject.name}' gagal mendapatkan jalur dari {sourcePosition} ke {destPosition}. PathStatus: {navPath.status}");
 #endif
-            pathCorners = null;
+            pathCornersCount = 0;
         }
 
         // Reset pelacak stuck
@@ -537,81 +555,7 @@ public class NPCController : MonoBehaviour
         lastPosition = transform.position;
     }
 
-    /// <summary>
-    /// Menggerakkan fisik Rigidbody menyusuri cache corners rute.
-    /// </summary>
-    private void FollowPath()
-    {
-        // Jika cache rute kosong, minta hitung ulang
-        if (pathCorners == null || pathCorners.Length == 0 || currentCornerIndex >= pathCorners.Length)
-        {
-            Transform targetWaypoint = waypointsList[currentWaypointIndex];
-            CalculatePathToTarget(targetWaypoint.position);
-            return;
-        }
 
-        Vector3 targetCorner = pathCorners[currentCornerIndex];
-
-        // 1. Deteksi kedatangan di sudut rute saat ini (Menggunakan sqrMagnitude untuk efisiensi eksekusi WebGL)
-        float sqrDistanceToCorner = (transform.position - targetCorner).sqrMagnitude;
-        if (sqrDistanceToCorner <= sqrWaypointTolerance)
-        {
-            currentCornerIndex++;
-            stuckRecalculateCount = 0; // Reset stuck counter saat sukses mencapai sudut baru
-            if (currentCornerIndex >= pathCorners.Length)
-            {
-                // Selesai menyusuri rute sudut, biarkan FixedUpdate mendeteksi kedatangan di waypoint utama
-                return;
-            }
-            targetCorner = pathCorners[currentCornerIndex];
-        }
-
-        // 2. Deteksi Stuck (Pemulihan jika terhalang dinding/player/obstacle)
-        // Gunakan kuadrat jarak (0.05f * 0.05f = 0.0025f) untuk efisiensi CPU WebGL
-        float sqrDistanceMoved = (transform.position - lastPosition).sqrMagnitude;
-        if (sqrDistanceMoved < 0.0025f) // Bergerak sangat lambat atau diam
-        {
-            stuckTimer += Time.fixedDeltaTime;
-            if (stuckTimer >= stuckTimeout)
-            {
-                stuckRecalculateCount++;
-                if (stuckRecalculateCount >= 2)
-                {
-#if UNITY_EDITOR
-                    Debug.LogWarning($"[NPCController] NPC '{gameObject.name}' tetap terjebak setelah kalkulasi ulang. Melewati waypoint '{waypointsList[currentWaypointIndex].name}'.");
-#endif
-                    stuckRecalculateCount = 0;
-                    stuckTimer = 0f;
-                    AdvanceToNextWaypoint();
-                    return;
-                }
-
-#if UNITY_EDITOR
-                Debug.LogWarning($"[NPCController] NPC '{gameObject.name}' terjebak (stuck)! Melakukan recalculate rute.");
-#endif
-                stuckTimer = 0f;
-                Transform targetWaypoint = waypointsList[currentWaypointIndex];
-                CalculatePathToTarget(targetWaypoint.position);
-                return;
-            }
-        }
-        else
-        {
-            stuckTimer = 0f; // Reset timer jika masih bisa bergerak
-            stuckRecalculateCount = 0; // Reset counter
-        }
-        lastPosition = transform.position;
-
-        // 3. Hitung arah ke sudut target berikutnya
-        Vector3 moveDirection = (targetCorner - transform.position);
-        moveDirection.y = 0f; // Abaikan perbedaan tinggi vertikal
-
-        if (moveDirection.magnitude > 0.01f)
-        {
-            moveDirection.Normalize();
-            SteerPhysicsTrolley(moveDirection);
-        }
-    }
 
     /// <summary>
     /// Mengemudikan bodi Rigidbody NPC secara fisik mengikuti parameter setara Player.
