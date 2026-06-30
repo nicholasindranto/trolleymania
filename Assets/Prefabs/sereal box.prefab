@@ -77,7 +77,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1157973992096613445}
   - component: {fileID: 8591505376084834021}
-  - component: {fileID: 6232394916087955192}
   - component: {fileID: 9155470139311657103}
   - component: {fileID: 4957304106613600014}
   m_Layer: 0
@@ -125,50 +124,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1.1, y: 1.4266126, z: 0.45}
   m_Center: {x: 0, y: 0.01330626, z: 0}
---- !u!114 &6232394916087955192
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8209715981535576893}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e665461076071cb4dbdbb0bf3b4aec12, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  outlineMode: 0
-  outlineColor: {r: 1, g: 0.98039216, b: 0, a: 1}
-  outlineWidth: 10
-  precomputeOutline: 1
-  bakeKeys:
-  - {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
-  bakeValues:
-  - data:
-    - {x: 0.57735026, y: -0.57735026, z: 0.57735026}
-    - {x: -0.57735026, y: -0.57735026, z: 0.57735026}
-    - {x: 0.57735026, y: 0.57735026, z: 0.57735026}
-    - {x: -0.57735026, y: 0.57735026, z: 0.57735026}
-    - {x: 0.57735026, y: 0.57735026, z: -0.57735026}
-    - {x: -0.57735026, y: 0.57735026, z: -0.57735026}
-    - {x: 0.57735026, y: -0.57735026, z: -0.57735026}
-    - {x: -0.57735026, y: -0.57735026, z: -0.57735026}
-    - {x: 0.57735026, y: 0.57735026, z: 0.57735026}
-    - {x: -0.57735026, y: 0.57735026, z: 0.57735026}
-    - {x: 0.57735026, y: 0.57735026, z: -0.57735026}
-    - {x: -0.57735026, y: 0.57735026, z: -0.57735026}
-    - {x: 0.57735026, y: -0.57735026, z: -0.57735026}
-    - {x: 0.57735026, y: -0.57735026, z: 0.57735026}
-    - {x: -0.57735026, y: -0.57735026, z: 0.57735026}
-    - {x: -0.57735026, y: -0.57735026, z: -0.57735026}
-    - {x: -0.57735026, y: -0.57735026, z: 0.57735026}
-    - {x: -0.57735026, y: 0.57735026, z: 0.57735026}
-    - {x: -0.57735026, y: 0.57735026, z: -0.57735026}
-    - {x: -0.57735026, y: -0.57735026, z: -0.57735026}
-    - {x: 0.57735026, y: -0.57735026, z: -0.57735026}
-    - {x: 0.57735026, y: 0.57735026, z: -0.57735026}
-    - {x: 0.57735026, y: 0.57735026, z: 0.57735026}
-    - {x: 0.57735026, y: -0.57735026, z: 0.57735026}
 --- !u!54 &9155470139311657103
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -213,6 +168,7 @@ MonoBehaviour:
   objMoveThreshold: 0.1
   rb: {fileID: 9155470139311657103}
   areaTrigger: {fileID: 812215902784824526}
+  sleepCheckInterval: 0.2
 --- !u!1001 &1286139574997444704
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -230,6 +186,21 @@ PrefabInstance:
         type: 3}
       propertyPath: m_TagString
       value: Untagged
+      objectReference: {fileID: 0}
+    - target: {fileID: 6290877018512324093, guid: 1e990e856a122754b8386dd5b0d1d24e,
+        type: 3}
+      propertyPath: outlineColor.b
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6290877018512324093, guid: 1e990e856a122754b8386dd5b0d1d24e,
+        type: 3}
+      propertyPath: outlineColor.g
+      value: 0.98039216
+      objectReference: {fileID: 0}
+    - target: {fileID: 6290877018512324093, guid: 1e990e856a122754b8386dd5b0d1d24e,
+        type: 3}
+      propertyPath: outlineColor.r
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6795082906543769484, guid: 1e990e856a122754b8386dd5b0d1d24e,
         type: 3}

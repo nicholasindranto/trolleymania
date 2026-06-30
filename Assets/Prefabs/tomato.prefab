@@ -237,6 +237,21 @@ PrefabInstance:
       propertyPath: m_TagString
       value: Untagged
       objectReference: {fileID: 0}
+    - target: {fileID: 3589831576113364544, guid: f354fb1e81fdf764b8b444d91b097e0a,
+        type: 3}
+      propertyPath: outlineColor.b
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3589831576113364544, guid: f354fb1e81fdf764b8b444d91b097e0a,
+        type: 3}
+      propertyPath: outlineColor.g
+      value: 0.98039216
+      objectReference: {fileID: 0}
+    - target: {fileID: 3589831576113364544, guid: f354fb1e81fdf764b8b444d91b097e0a,
+        type: 3}
+      propertyPath: outlineColor.r
+      value: 1
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
