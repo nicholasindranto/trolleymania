@@ -1,7 +1,12 @@
 fileFormatVersion: 2
-guid: 53e827d97b06d8e4faf9b9b56a17de24
+<<<<<<<< HEAD:Assets/Affi_Assets/Prefabs/NPC_Male.prefab.meta
+guid: c7de08add69d7a94e96bdea7c8f1bf27
+PrefabImporter:
+========
+guid: f24bddcf7f5807a4bb0e98c0d831ff16
 folderAsset: yes
 DefaultImporter:
+>>>>>>>> origin/EmYiKay-asset-dump:Assets/3D_Env_Gaby/Asset_EnvBG_Empty/Models_PerArea/BackArea.meta
   externalObjects: {}
   userData: 
   assetBundleName: 

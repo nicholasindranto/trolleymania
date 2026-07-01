@@ -1,7 +1,11 @@
 fileFormatVersion: 2
-guid: 044e6a5f9801f2a40bc68ac0d549213c
+<<<<<<<< HEAD:Assets/Affi_Assets/Meshes/NPC_Female_Mesh.fbx.meta
+guid: 11b81b6bcee869b4d98cce6cbd39feac
+========
+guid: 096aada0f3e58644d96937bf2f896633
+>>>>>>>> origin/EmYiKay-asset-dump:Assets/3D_Env_Gaby/Asset_EnvBG_Empty/Models_PerArea/BackArea/BackArea.fbx.meta
 ModelImporter:
-  serializedVersion: 22200
+  serializedVersion: 24200
   internalIDToNameTable: []
   externalObjects: {}
   materials:
@@ -16,8 +20,6 @@ ModelImporter:
     optimizeGameObjects: 0
     removeConstantScaleCurves: 0
     motionNodeName: 
-    rigImportErrors: 
-    rigImportWarnings: 
     animationImportErrors: 
     animationImportWarnings: 
     animationRetargetingWarnings: 
@@ -58,6 +60,9 @@ ModelImporter:
     maxBonesPerVertex: 4
     minBoneWeight: 0.001
     optimizeBones: 1
+    generateMeshLods: 0
+    meshLodGenerationFlags: 0
+    maximumMeshLod: -1
     meshOptimizationFlags: -1
     indexFormat: 0
     secondaryUVAngleDistortion: 8

@@ -1,7 +1,11 @@
 fileFormatVersion: 2
-guid: fc606cbcef5d8c546a1dcafaf35df9e8
+<<<<<<<< HEAD:Assets/Affi_Assets/Meshes/NPC_Male_Mesh.fbx.meta
+guid: db8ea9759ffa6ad48973c77653b3af65
+========
+guid: 37af3a48c52354e41906d8e74de8e46b
+>>>>>>>> origin/EmYiKay-asset-dump:Assets/3D_Env_Gaby/Asset_EnvBG_Empty/Models_PerArea/Building/Building.fbx.meta
 ModelImporter:
-  serializedVersion: 22200
+  serializedVersion: 24200
   internalIDToNameTable: []
   externalObjects: {}
   materials:
@@ -16,8 +20,6 @@ ModelImporter:
     optimizeGameObjects: 0
     removeConstantScaleCurves: 0
     motionNodeName: 
-    rigImportErrors: 
-    rigImportWarnings: 
     animationImportErrors: 
     animationImportWarnings: 
     animationRetargetingWarnings: 
@@ -58,6 +60,9 @@ ModelImporter:
     maxBonesPerVertex: 4
     minBoneWeight: 0.001
     optimizeBones: 1
+    generateMeshLods: 0
+    meshLodGenerationFlags: 0
+    maximumMeshLod: -1
     meshOptimizationFlags: -1
     indexFormat: 0
     secondaryUVAngleDistortion: 8
