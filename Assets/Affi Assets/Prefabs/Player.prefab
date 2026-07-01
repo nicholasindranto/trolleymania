@@ -1,5 +1,36 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1 &5405477158187794842
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7390796043626977869}
+  m_Layer: 0
+  m_Name: Axis.Hand.R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7390796043626977869
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5405477158187794842}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.000000024433932, y: 0.0000000032198957, z: 5.987935e-15, w: 1}
+  m_LocalPosition: {x: 0.1, y: 0.325, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1864837106415149084}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &2921749629788039162
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -48,18 +79,30 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: -6734961514822852632, guid: bf8f53613706f5b48ae4f8a0d969c469, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: bf8f53613706f5b48ae4f8a0d969c469, type: 3}
       propertyPath: m_Name
       value: Player
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: -5661841972915959834, guid: bf8f53613706f5b48ae4f8a0d969c469, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 7390796043626977869}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: bf8f53613706f5b48ae4f8a0d969c469, type: 3}
       insertIndex: -1
       addedObject: {fileID: 6141983004386793852}
   m_SourcePrefab: {fileID: 100100000, guid: bf8f53613706f5b48ae4f8a0d969c469, type: 3}
+--- !u!4 &1864837106415149084 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -5661841972915959834, guid: bf8f53613706f5b48ae4f8a0d969c469, type: 3}
+  m_PrefabInstance: {fileID: 2921749629788039162}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &2615828455612750507 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: bf8f53613706f5b48ae4f8a0d969c469, type: 3}
