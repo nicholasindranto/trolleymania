@@ -34,7 +34,7 @@ public class HUDController : MonoBehaviour
 
     [Header("Settings")]
     [Tooltip("Kecepatan gerak linear objek saat melayang menuju titik spawn.")]
-    [SerializeField] private float grabMoveSpeed = 8f;
+    [SerializeField] private float grabMoveSpeed = 30f;
 
     [Tooltip("Besar gaya dorong impuls saat melempar senjata.")]
     [SerializeField] private float throwForce = 25f;
@@ -417,15 +417,8 @@ public class HUDController : MonoBehaviour
             {
                 // KODENYA TERSPESIALISASI:
                 // Jangan jadikan child dari objSpawnPoint saat rb/fisika aktif agar tidak membebani pergerakan trolley.
-                // Tempatkan di bawah CollectableObjectsParent atau null agar posisinya bebas selama proses jatuh.
-                if (ObjectiveManager.Instance != null && ObjectiveManager.Instance.CollectableObjectsParent != null)
-                {
-                    obj.transform.SetParent(ObjectiveManager.Instance.CollectableObjectsParent);
-                }
-                else
-                {
-                    obj.transform.SetParent(null);
-                }
+                // Tempatkan di bawah parent null agar posisinya bebas selama proses jatuh.
+                obj.transform.SetParent(null);
 
                 // LOGIC DI BALIK LAYAR (Barang Masuk Trolley):
                 // Nyalakan kembali fisika dan collider-nya agar ia jatuh secara alami ke dalam trolley.

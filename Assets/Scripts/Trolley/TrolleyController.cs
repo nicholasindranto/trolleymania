@@ -13,16 +13,29 @@ public class TrolleyController : MonoBehaviour
 
     [Header("Movement Settings")]
     [Tooltip("Kecepatan maksimum trolley saat berjalan lurus.")]
-    [SerializeField] private float maxSpeed = 8f;
+    [SerializeField] private float maxSpeed = 12f;
 
     [Tooltip("Seberapa cepat trolley berakselerasi menuju kecepatan maksimum.")]
-    [SerializeField] private float acceleration = 5f;
+    [SerializeField] private float acceleration = 10f;
 
     [Tooltip("Seberapa cepat trolley mengerem saat joystick dilepas.")]
-    [SerializeField] private float deceleration = 8f;
+    [SerializeField] private float deceleration = 14f;
 
     [Tooltip("Batas mati input joystick (deadzone). Input di bawah nilai ini akan diabaikan.")]
     [SerializeField] private float inputDeadzone = 0.1f;
+
+    [Header("Knockback Settings")]
+    [Tooltip("Gaya knockback ketika NPC menabrak dengan kecepatan > 75% max speed.")]
+    [SerializeField] private float knockbackForceHigh = 100f;
+
+    [Tooltip("Gaya knockback ketika NPC menabrak dengan kecepatan > 50% max speed.")]
+    [SerializeField] private float knockbackForceMedium = 50f;
+
+    [Tooltip("Gaya knockback ketika NPC menabrak dengan kecepatan > 25% max speed.")]
+    [SerializeField] private float knockbackForceLow = 25f;
+
+    [Tooltip("Kecepatan deselerasi knockback (m/s^2).")]
+    [SerializeField] private float knockbackDecay = 120f;
 
     [Header("Steering Settings")]
     // [Tooltip("Kecepatan rotasi/belok dasar saat trolley bergerak lambat.")]
@@ -45,14 +58,11 @@ public class TrolleyController : MonoBehaviour
     [Tooltip("Seberapa besar pengaruh berat barang terhadap penurunan akselerasi dan belokan.")]
     [SerializeField] private float weightImpactMultiplier = 0.15f;
 
-    [Header("Upright Stability Settings")]
-    [Tooltip("Interval waktu (detik) untuk mereset rotasi X dan Z agar tetap 0. Set ke 0 untuk mereset setiap frame.")]
-    [SerializeField] private float rotationResetInterval = 0.5f;
-
     // Variabel internal
     [SerializeField] private Rigidbody rb;
     private float currentForwardSpeed = 0f;
     private float currentSidewaySpeed = 0f;
+    private Vector3 activeKnockbackVector = Vector3.zero;
 
     // KODENYA TERSPESIALISASI: List untuk mencatat normal bidang kontak dari dinding/obstacle statis
     // yang sedang ditabrak pada frame fisika saat ini (zero GC pressure karena di-clear tiap FixedUpdate).
@@ -66,6 +76,10 @@ public class TrolleyController : MonoBehaviour
     // ==========================================
     // Properties untuk dibaca oleh TouchCameraController
     // ==========================================
+
+    public float KnockbackForceHigh => knockbackForceHigh;
+    public float KnockbackForceMedium => knockbackForceMedium;
+    public float KnockbackForceLow => knockbackForceLow;
 
     // Mengekspos pengali kesulitan berbelok saat kecepatan maksimum ke script kamera.
     public float TurnDifficultyAtMaxSpeed => turnDifficultyAtMaxSpeed;
@@ -93,24 +107,35 @@ public class TrolleyController : MonoBehaviour
         }
     }
 
+    public float CurrentSpeed => Mathf.Sqrt(currentForwardSpeed * currentForwardSpeed + currentSidewaySpeed * currentSidewaySpeed);
+
+    /// <summary>
+    /// Menerapkan efek knockback ke player secara kinematik.
+    /// </summary>
+    public void ApplyKnockback(Vector3 direction, float force)
+    {
+        activeKnockbackVector += direction.normalized * force;
+        currentForwardSpeed = 0f;
+        currentSidewaySpeed = 0f;
+    }
+
     private void Start()
     {
         // Mengatur parameter Rigidbody agar sesuai dengan simulasi fisik trolley
-        rb.useGravity = true;
-        rb.drag = 0.1f; // Sedikit hambatan udara agar tidak seluncur tanpa henti
-        rb.angularDrag = 2f; // Hambatan rotasi tinggi agar tidak berputar berlebihan (stabil)
-
-        // PENTING: Kunci rotasi X dan Z agar trolley tidak terguling/miring saat menabrak dinding
-        rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        if (rb != null)
+        {
+            rb.isKinematic = true;
+            rb.useGravity = false;
+            rb.drag = 0f;
+            rb.angularDrag = 0f;
+            rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        }
 
         // Auto-assign joystick jika kosong di Inspector demi menghindari NullReferenceException
         if (joystick == null)
         {
             joystick = FindObjectOfType<FloatingJoystick>();
         }
-
-        // Jalankan Coroutine mandiri untuk menjaga agar troli tetap tegak lurus (X/Z = 0)
-        StartCoroutine(KeepUprightCoroutine());
     }
 
     private void FixedUpdate()
@@ -156,10 +181,7 @@ public class TrolleyController : MonoBehaviour
     {
         currentForwardSpeed = 0f;
         currentSidewaySpeed = 0f;
-        if (rb != null)
-        {
-            rb.velocity = new Vector3(0f, rb.velocity.y, 0f);
-        }
+        activeKnockbackVector = Vector3.zero;
     }
 
     /// <summary>
@@ -195,11 +217,6 @@ public class TrolleyController : MonoBehaviour
                     // Juga langsung nol-kan kecepatan saat ini agar tidak berlanjut meluncur
                     currentForwardSpeed = 0f;
                     currentSidewaySpeed = 0f;
-                    
-                    if (rb != null)
-                    {
-                        rb.velocity = new Vector3(0f, rb.velocity.y, 0f);
-                    }
                     break;
                 }
             }
@@ -268,8 +285,35 @@ public class TrolleyController : MonoBehaviour
         //    Ini mengubah kecepatan lokal menjadi orientasi arah dunia (World Space) yang tepat sesuai dengan arah hadap trolley.
         Vector3 localVelocity = (transform.forward * currentForwardSpeed) + (transform.right * currentSidewaySpeed);
 
-        // 5. Terapkan kecepatan ke Rigidbody dengan mempertahankan gravitasi pada sumbu Y (rb.velocity.y).
-        rb.velocity = new Vector3(localVelocity.x, rb.velocity.y, localVelocity.z);
+        // KODENYA TERSPESIALISASI: Sliding collision response untuk mencegah penetrasi dinding saat isKinematic = true
+        if (activeWallNormals.Count > 0)
+        {
+            for (int i = 0; i < activeWallNormals.Count; i++)
+            {
+                Vector3 wallNormal = activeWallNormals[i];
+                float dot = Vector3.Dot(localVelocity, wallNormal);
+                if (dot < 0f)
+                {
+                    // Hilangkan komponen pergerakan yang menabrak dinding secara langsung (slide along the wall)
+                    localVelocity -= dot * wallNormal;
+                }
+            }
+        }
+
+        // 5. Terapkan pergerakan kinematik ke Rigidbody dengan MovePosition, menjaga Y tetap konsisten dengan posisi saat ini
+        Vector3 totalVelocity = localVelocity + activeKnockbackVector;
+        Vector3 nextPos = rb.position + totalVelocity * Time.fixedDeltaTime;
+        rb.MovePosition(nextPos);
+
+        // Luruhkan vektor knockback secara bertahap
+        if (activeKnockbackVector.sqrMagnitude > 0.001f)
+        {
+            activeKnockbackVector = Vector3.MoveTowards(activeKnockbackVector, Vector3.zero, knockbackDecay * Time.fixedDeltaTime);
+        }
+        else
+        {
+            activeKnockbackVector = Vector3.zero;
+        }
     }
 
     /// <summary>
@@ -330,55 +374,6 @@ public class TrolleyController : MonoBehaviour
             // Metode ini memungkinkan mesin fisika menghitung interaksi tabrakan (collision) dengan baik sepanjang lintasan beloknya,
             // berbeda jika kita langsung memanipulasi transform.rotation secara mentah (teleportasi rotasi yang bisa menembus dinding).
             rb.MoveRotation(rb.rotation * turnRotation);
-        }
-    }
-
-    /// <summary>
-    /// Coroutine mandiri untuk menjaga agar troli tetap tegak lurus (rotation X & Z = 0).
-    /// Mengurangi beban pemrosesan di FixedUpdate/Update.
-    /// </summary>
-    private System.Collections.IEnumerator KeepUprightCoroutine()
-    {
-        // Cache yield instruction untuk mencegah alokasi GC (Garbage Collection) di Mobile WebGL
-        WaitForSeconds delay = rotationResetInterval > 0f ? new WaitForSeconds(rotationResetInterval) : null;
-
-        while (true)
-        {
-            ResetRotationXZ();
-
-            if (rotationResetInterval > 0f)
-            {
-                yield return delay;
-            }
-            else
-            {
-                yield return null; // Jika interval disetel <= 0, reset berjalan setiap frame (smooth)
-            }
-        }
-    }
-
-    /// <summary>
-    /// Mereset rotasi X dan Z dari transform menjadi tepat 0 secara efisien.
-    /// Hanya melakukan write ke transform jika ada deviasi sudut (menghindari CPU overhead di WebGL).
-    /// </summary>
-    private void ResetRotationXZ()
-    {
-        Vector3 currentRot = transform.eulerAngles;
-        // PENTING: Gunakan Mathf.Approximately untuk mengecek deviasi float secara cepat tanpa overhead
-        if (!Mathf.Approximately(currentRot.x, 0f) || !Mathf.Approximately(currentRot.z, 0f))
-        {
-            currentRot.x = 0f;
-            currentRot.z = 0f;
-            transform.eulerAngles = currentRot;
-
-            // Jika Rigidbody masih memiliki sisa kecepatan sudut miring, hentikan agar rotasi fisik sinkron
-            if (rb != null && !rb.isKinematic)
-            {
-                Vector3 angularVel = rb.angularVelocity;
-                angularVel.x = 0f;
-                angularVel.z = 0f;
-                rb.angularVelocity = angularVel;
-            }
         }
     }
 }

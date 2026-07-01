@@ -3,11 +3,9 @@ using UnityEngine;
 using UnityEngine.AI;
 
 /// <summary>
-/// Script ini mengontrol pergerakan fisik dan kecerdasan buatan (AI) dari Trolley NPC.
-/// Menggunakan kombinasi NavMesh.CalculatePath untuk pencarian rute yang di-cache (tidak setiap frame),
-/// dan kemudi berbasis fisika (Rigidbody) agar jalannya NPC setara dan konsisten dengan kontrol player.
+/// Script ini mengontrol pergerakan kecerdasan buatan (AI) dari Trolley NPC menggunakan NavMeshAgent murni.
 /// </summary>
-[RequireComponent(typeof(Rigidbody))]
+[RequireComponent(typeof(NavMeshAgent))]
 public class NPCController : MonoBehaviour
 {
     public enum NPCType
@@ -41,6 +39,7 @@ public class NPCController : MonoBehaviour
     [Tooltip("Sensitivitas/Kecepatan putar bodi NPC saat membelok.")]
     [SerializeField] private float turnSensitivity = 2f;
 
+#pragma warning disable 0414
     [Tooltip("Pengali kesusahan belok pada kecepatan maksimum (0-1). Semakin kecil, semakin kaku belok saat kencang.")]
     [Range(0.01f, 1f)]
     [SerializeField] private float turnDifficultyAtMaxSpeed = 0.3f;
@@ -48,6 +47,7 @@ public class NPCController : MonoBehaviour
     [Tooltip("Rasio threshold kecepatan (0-1) di mana belokan mulai terasa berat (seperti player).")]
     [Range(0.1f, 1f)]
     [SerializeField] private float heavyTurnSpeedThreshold = 0.75f;
+#pragma warning restore 0414
 
     [Header("Reaction & KO Configs (Manual Balancing)")]
     [Tooltip("Batas kecepatan minimum Rigidbody senjata agar dianggap dilempar.")]
@@ -83,9 +83,6 @@ public class NPCController : MonoBehaviour
     [Tooltip("Durasi stun sedang (detik) untuk senjata menengah.")]
     [SerializeField] private float mediumStunDuration = 2.0f;
 
-    [Tooltip("Interval waktu (detik) untuk mereset rotasi X dan Z agar tetap 0. Set ke 0 untuk mereset setiap frame.")]
-    [SerializeField] private float rotationResetInterval = 0.5f;
-
     [Header("Pathfinding & Waypoints (WebGL Mobile Optimization)")]
     [Tooltip("Daftar titik StayPoint (NPC akan berhenti diam di sini) yang di-assign langsung di Inspector.")]
     [SerializeField] private Transform[] stayPoints;
@@ -105,28 +102,28 @@ public class NPCController : MonoBehaviour
     [Tooltip("Waktu maksimal (detik) tanpa pergerakan sebelum AI melakukan kalkulasi rute ulang (sistem pemulihan stuck).")]
     [SerializeField] private float stuckTimeout = 3.0f;
 
+#pragma warning disable 0414
     [SerializeField] private string navMeshAgentName = "Trolley";
+#pragma warning restore 0414
 
     [Header("Optimization Configs")]
     [Tooltip("Interval pembaruan kecerdasan AI navigasi (detik).")]
     [SerializeField] private float aiUpdateInterval = 0.5f;
 
+    [Tooltip("Interval pembaruan status timer (Stun & Wait) NPC (detik).")]
+    [SerializeField] private float statusUpdateInterval = 0.1f;
+
     // Komponen referensi internal
     [SerializeField] private Rigidbody rb;
-    private NavMeshPath navPath;
+    private NavMeshAgent agent;
 
     // Cache WaitForSeconds untuk zero GC allocation di WebGL
     private WaitForSeconds aiUpdateDelay;
-    private Vector3 currentMoveDirection = Vector3.zero;
+    private WaitForSeconds statusUpdateDelay;
     
     // Antrean rute patroli
     private List<Transform> waypointsList = new List<Transform>();
     private int currentWaypointIndex = 0;
-
-    // Cache koordinat sudut rute (Path Caching - Menghindari per-frame pathfinding)
-    private Vector3[] pathCornersBuffer = new Vector3[64];
-    private int pathCornersCount = 0;
-    private int currentCornerIndex = 0;
 
     // Cache kuadrat toleransi untuk efisiensi perbandingan tanpa Sqrt (Mobile WebGL optimization)
     private float sqrWaypointTolerance;
@@ -137,9 +134,6 @@ public class NPCController : MonoBehaviour
     // Set untuk lookup O(1) cepat apakah suatu waypoint adalah StayPoint (WebGL Mobile optimization)
     private HashSet<Transform> stayPointsSet = new HashSet<Transform>();
 
-    // Query filter untuk menentukan Agent Type ID saat kalkulasi rute NavMesh
-    private NavMeshQueryFilter queryFilter;
-
     // Variabel penampung range acak berdasarkan GDD (Game Design Document)
     private float activeMinSpeed;
     private float activeMaxSpeed;
@@ -147,7 +141,6 @@ public class NPCController : MonoBehaviour
     private float activeMaxStay;
 
     // Status pergerakan & waktu tunggu
-    private float currentForwardSpeed = 0f;
     private bool isWaiting = false;
     private float waitTimer = 0f;
 
@@ -161,13 +154,15 @@ public class NPCController : MonoBehaviour
     // Deteksi stuck/terjebak fisik
     private Vector3 lastPosition;
     private float stuckTimer = 0f;
-    private int stuckRecalculateCount = 0;
 
+    public float CurrentSpeed => (agent != null && agent.enabled) ? agent.velocity.magnitude : 0f;
     public float MaxSpeed => maxSpeed;
 
     private void Start()
     {
-        // Pastikan rigidbody disetel dengan aman untuk mobile WebGL (mengunci rotasi agar tidak guling)
+        agent = GetComponent<NavMeshAgent>();
+
+        // Pastikan rigidbody disetel dengan aman untuk mobile WebGL (mengunci rotasi agar tidak guling) jika ada
         if (rb != null)
         {
             rb.drag = 0.5f;
@@ -183,99 +178,114 @@ public class NPCController : MonoBehaviour
         {
             ApplyLorePreset();
         }
+        else
+        {
+            if (agent != null)
+            {
+                agent.speed = maxSpeed;
+                agent.acceleration = acceleration;
+                agent.angularSpeed = turnSensitivity * 100f;
+                agent.stoppingDistance = arrivalDistanceThreshold;
+            }
+        }
 
         // Inisialisasi posisi terakhir untuk deteksi stuck awal
         lastPosition = transform.position;
 
-        // Hitung kuadrat toleransi agar terhindar dari operasi akar (Sqrt) di FixedUpdate
+        // Hitung kuadrat toleransi agar terhindar dari operasi akar (Sqrt)
         sqrWaypointTolerance = waypointTolerance * waypointTolerance;
         sqrArrivalDistanceThreshold = arrivalDistanceThreshold * arrivalDistanceThreshold;
-
-        // Mengambil Agent Type ID berdasarkan konfigurasi nama di Navigation settings Unity
-        int agentTypeId = 0; // Default Humanoid
-        for (int i = 0; i < NavMesh.GetSettingsCount(); i++)
-        {
-            var settings = NavMesh.GetSettingsByIndex(i);
-            if (NavMesh.GetSettingsNameFromID(settings.agentTypeID) == navMeshAgentName)
-            {
-                agentTypeId = settings.agentTypeID;
-                break;
-            }
-        }
-
-        // Setup filter NavMesh Query untuk jalur pathfinding
-        queryFilter = new NavMeshQueryFilter();
-        queryFilter.areaMask = NavMesh.AllAreas;
-        queryFilter.agentTypeID = agentTypeId;
 
         // Mulai jalankan rute awal ke waypoint pertama
         if (waypointsList.Count > 0)
         {
-            CalculatePathToTarget(waypointsList[currentWaypointIndex].position);
+            if (agent != null && agent.enabled)
+            {
+                agent.SetDestination(waypointsList[currentWaypointIndex].position);
+                agent.isStopped = false;
+            }
         }
-
-        // Jalankan Coroutine mandiri untuk menjaga agar NPC tetap tegak lurus (X/Z = 0) saat patroli
-        StartCoroutine(KeepUprightCoroutine());
 
         // Inisialisasi delay AI dan jalankan loop AI secara berkala (recursive coroutine)
         aiUpdateDelay = new WaitForSeconds(aiUpdateInterval);
+        statusUpdateDelay = new WaitForSeconds(statusUpdateInterval);
         StartCoroutine(AILoop());
+        StartCoroutine(StatusUpdateLoop());
     }
 
-    private void FixedUpdate()
+    private System.Collections.IEnumerator StatusUpdateLoop()
     {
-        // KODENYA TERSPESIALISASI: Jika game masih loading, rem trolley NPC dan matikan logika
-        if (ObjectiveManager.IsLoading)
+        while (true)
         {
-            DecelerateTrolley();
-            return;
-        }
-
-        // OPTIMALISASI FISIKA WEBGL:
-        // Jika NPC sedang dalam kondisi KO (Knockout), hentikan seluruh logika AI dan navigasi
-        // agar tidak membebani komputasi CPU dan membiarkan simulasi fisika ragdoll berjalan penuh.
-        if (isKO) return;
-
-        // Jika sedang terkena efek Stun, jalankan jeda waktu dan rem troli NPC
-        if (isStunned)
-        {
-            stunTimer -= Time.fixedDeltaTime;
-            DecelerateTrolley(); // Mengerem troli secara perlahan (hemat CPU)
-
-            if (stunTimer <= 0f)
+            // KODENYA TERSPESIALISASI: Jika game masih loading, rem trolley NPC dan matikan logika
+            if (ObjectiveManager.IsLoading)
             {
-                isStunned = false;
+                if (agent != null && agent.enabled)
+                {
+                    agent.isStopped = true;
+                    agent.velocity = Vector3.zero;
+                }
+                yield return statusUpdateDelay;
+                continue;
+            }
+
+            // Jika NPC sedang dalam kondisi KO (Knockout), hentikan seluruh logika AI dan navigasi
+            if (isKO)
+            {
+                if (agent != null && agent.enabled)
+                {
+                    agent.enabled = false;
+                }
+                yield break; // Hentikan coroutine ini secara permanen
+            }
+
+            // Jika sedang terkena efek Stun, jalankan jeda waktu dan rem troli NPC
+            if (isStunned)
+            {
+                stunTimer -= statusUpdateInterval;
+                if (agent != null && agent.enabled)
+                {
+                    agent.isStopped = true;
+                    agent.velocity = Vector3.zero;
+                }
+
+                if (stunTimer <= 0f)
+                {
+                    isStunned = false;
+                    if (rb != null)
+                    {
+                        rb.isKinematic = true;
+                        rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+                    }
+                    transform.eulerAngles = new Vector3(0f, transform.eulerAngles.y, 0f);
+
+                    if (agent != null && agent.enabled)
+                    {
+                        agent.isStopped = false;
+                    }
 #if UNITY_EDITOR
-                Debug.Log($"[NPCController] NPC '{gameObject.name}' pulih dari efek Stun.");
+                    Debug.Log($"[NPCController] NPC '{gameObject.name}' pulih dari efek Stun.");
 #endif
+                }
             }
-            return; // Lewati sisa logika navigasi AI saat pusing/stun
-        }
-
-        // 1. Kondisi diam/menunggu di StayPoint
-        if (isWaiting)
-        {
-            waitTimer -= Time.fixedDeltaTime;
-            
-            // Perlahan rem trolley NPC hingga diam
-            DecelerateTrolley();
-
-            if (waitTimer <= 0f)
+            // Kondisi diam/menunggu di StayPoint
+            else if (isWaiting)
             {
-                isWaiting = false;
-                AdvanceToNextWaypoint();
-            }
-            return;
-        }
+                waitTimer -= statusUpdateInterval;
+                if (agent != null && agent.enabled)
+                {
+                    agent.isStopped = true;
+                    agent.velocity = Vector3.zero;
+                }
 
-        // 2. Kemudikan trolley secara fisik menggunakan arah pergerakan ter-cache
-        if (currentMoveDirection.sqrMagnitude > 0.001f)
-        {
-            SteerPhysicsTrolley(currentMoveDirection);
-        }
-        else
-        {
-            DecelerateTrolley();
+                if (waitTimer <= 0f)
+                {
+                    isWaiting = false;
+                    AdvanceToNextWaypoint();
+                }
+            }
+
+            yield return statusUpdateDelay;
         }
     }
 
@@ -298,15 +308,36 @@ public class NPCController : MonoBehaviour
         {
             Transform targetWaypoint = waypointsList[currentWaypointIndex];
 
-            // Deteksi kedatangan di waypoint utama (squared magnitude)
-            float sqrDistanceToWaypoint = (transform.position - targetWaypoint.position).sqrMagnitude;
-            if (sqrDistanceToWaypoint <= sqrArrivalDistanceThreshold)
+            // Cek apakah sudah sampai di waypoint target
+            bool arrived = false;
+            if (agent != null && agent.enabled)
+            {
+                if (!agent.pathPending && agent.remainingDistance <= arrivalDistanceThreshold)
+                {
+                    arrived = true;
+                }
+            }
+            else
+            {
+                float sqrDistanceToWaypoint = (transform.position - targetWaypoint.position).sqrMagnitude;
+                if (sqrDistanceToWaypoint <= sqrArrivalDistanceThreshold)
+                {
+                    arrived = true;
+                }
+            }
+
+            if (arrived)
             {
                 if (IsStayPoint(targetWaypoint))
                 {
                     isWaiting = true;
                     float currentStayDuration = useDefaultPresets ? Random.Range(activeMinStay, activeMaxStay) : stayDuration;
                     waitTimer = currentStayDuration;
+                    if (agent != null && agent.enabled)
+                    {
+                        agent.isStopped = true;
+                        agent.velocity = Vector3.zero;
+                    }
 #if UNITY_EDITOR
                     Debug.Log($"[NPCController] NPC '{gameObject.name}' sampai di StayPoint '{targetWaypoint.name}'. Berhenti selama {currentStayDuration:F1} detik.");
 #endif
@@ -318,8 +349,35 @@ public class NPCController : MonoBehaviour
             }
             else
             {
-                // Proses pembaruan arah sudut rute dan stuck check
-                UpdatePathFollowing();
+                // Deteksi Stuck (kalkulasi jarak tempuh sejak interval pembaruan terakhir)
+                if (agent != null && agent.enabled)
+                {
+                    float sqrDistanceMoved = (transform.position - lastPosition).sqrMagnitude;
+                    if (sqrDistanceMoved < 0.0025f && agent.velocity.sqrMagnitude < 0.01f) // Bergerak kurang dari 5 cm dalam interval update
+                    {
+                        stuckTimer += aiUpdateInterval;
+                        if (stuckTimer >= stuckTimeout)
+                        {
+                            stuckTimer = 0f;
+                            AdvanceToNextWaypoint();
+                            yield return aiUpdateDelay;
+                            StartCoroutine(AILoop());
+                            yield break;
+                        }
+                    }
+                    else
+                    {
+                        stuckTimer = 0f;
+                    }
+                    lastPosition = transform.position;
+
+                    // Pastikan agent sedang memiliki rute aktif menuju target waypoint
+                    if (!agent.hasPath || agent.isStopped)
+                    {
+                        agent.SetDestination(targetWaypoint.position);
+                        agent.isStopped = false;
+                    }
+                }
             }
         }
 
@@ -328,97 +386,17 @@ public class NPCController : MonoBehaviour
     }
 
     /// <summary>
-    /// Memperbarui arah navigasi berdasarkan cache sudut rute (corners) dan mendeteksi kondisi stuck.
-    /// </summary>
-    private void UpdatePathFollowing()
-    {
-        if (pathCornersCount == 0 || currentCornerIndex >= pathCornersCount)
-        {
-            Transform targetWaypoint = waypointsList[currentWaypointIndex];
-            CalculatePathToTarget(targetWaypoint.position);
-            return;
-        }
-
-        Vector3 targetCorner = pathCornersBuffer[currentCornerIndex];
-
-        // Deteksi kedatangan di sudut rute saat ini
-        float sqrDistanceToCorner = (transform.position - targetCorner).sqrMagnitude;
-        if (sqrDistanceToCorner <= sqrWaypointTolerance)
-        {
-            currentCornerIndex++;
-            stuckRecalculateCount = 0;
-            if (currentCornerIndex >= pathCornersCount)
-            {
-                currentMoveDirection = Vector3.zero;
-                return;
-            }
-            targetCorner = pathCornersBuffer[currentCornerIndex];
-        }
-
-        // Deteksi Stuck (kalkulasi jarak tempuh sejak interval pembaruan terakhir)
-        float sqrDistanceMoved = (transform.position - lastPosition).sqrMagnitude;
-        if (sqrDistanceMoved < 0.0025f) // Bergerak kurang dari 5 cm dalam interval update
-        {
-            stuckTimer += aiUpdateInterval;
-            if (stuckTimer >= stuckTimeout)
-            {
-                stuckRecalculateCount++;
-                if (stuckRecalculateCount >= 2)
-                {
-#if UNITY_EDITOR
-                    Debug.LogWarning($"[NPCController] NPC '{gameObject.name}' tetap terjebak setelah kalkulasi ulang. Melewati waypoint '{waypointsList[currentWaypointIndex].name}'.");
-#endif
-                    stuckRecalculateCount = 0;
-                    stuckTimer = 0f;
-                    AdvanceToNextWaypoint();
-                    return;
-                }
-
-#if UNITY_EDITOR
-                Debug.LogWarning($"[NPCController] NPC '{gameObject.name}' terjebak (stuck)! Melakukan recalculate rute.");
-#endif
-                stuckTimer = 0f;
-                Transform targetWaypoint = waypointsList[currentWaypointIndex];
-                CalculatePathToTarget(targetWaypoint.position);
-                return;
-            }
-        }
-        else
-        {
-            stuckTimer = 0f;
-            stuckRecalculateCount = 0;
-        }
-        lastPosition = transform.position;
-
-        // Hitung arah gerak ke target corner berikutnya
-        Vector3 moveDirection = (targetCorner - transform.position);
-        moveDirection.y = 0f;
-
-        if (moveDirection.sqrMagnitude > 0.0001f)
-        {
-            currentMoveDirection = moveDirection.normalized;
-        }
-        else
-        {
-            currentMoveDirection = Vector3.zero;
-        }
-    }
-
-    /// <summary>
     /// Menginisialisasi rute patroli dengan memasukkan waypoint dari array StayPoints dan NormalWaypoints.
-    /// Menggunakan AddRange untuk penggabungan (concatenation) instan yang sangat efisien di level memori C#.
     /// </summary>
     private void InitializeWaypoints()
     {
         waypointsList.Clear();
         stayPointsSet.Clear();
 
-        // Menggabungkan array StayPoints ke dalam list secara instan
         if (stayPoints != null)
         {
             waypointsList.AddRange(stayPoints);
 
-            // Daftarkan ke HashSet untuk lookup status staypoint yang sangat cepat (O(1))
             for (int i = 0; i < stayPoints.Length; i++)
             {
                 if (stayPoints[i] != null)
@@ -428,13 +406,11 @@ public class NPCController : MonoBehaviour
             }
         }
 
-        // Menggabungkan array NormalWaypoints ke dalam list secara instan
         if (normalWaypoints != null)
         {
             waypointsList.AddRange(normalWaypoints);
         }
 
-        // Bersihkan elemen kosong (null) jika ada slot kosong di Inspector dalam satu pass cepat
         waypointsList.RemoveAll(item => item == null);
 
         if (waypointsList.Count == 0)
@@ -458,7 +434,6 @@ public class NPCController : MonoBehaviour
     {
         if (waypointsList.Count == 0) return;
 
-        // Pilih target berikutnya secara acak, bukan urut (looping)
         if (waypointsList.Count > 1)
         {
             int nextIndex;
@@ -475,150 +450,21 @@ public class NPCController : MonoBehaviour
 
         Transform nextWaypoint = waypointsList[currentWaypointIndex];
 
-        // LOGIC DI BALIK LAYAR: Acak kecepatan untuk jalur berikutnya agar pergerakan terasa dinamis dan "chaos"
+        // LOGIC DI BALIK LAYAR: Acak kecepatan untuk jalur berikutnya agar pergerakan terasa dinamis
         if (useDefaultPresets)
         {
             maxSpeed = Random.Range(activeMinSpeed, activeMaxSpeed);
-        }
-
-        // Hitung rute baru ke waypoint selanjutnya
-        CalculatePathToTarget(nextWaypoint.position);
-    }
-
-    /// <summary>
-    /// Menghitung rute NavMesh dan menyimpannya ke dalam cache (corners).
-    /// Menggunakan NavMesh.SamplePosition agar rute tetap berhasil ditemukan meskipun posisi awal atau target sedikit offset dari NavMesh.
-    /// </summary>
-    private void CalculatePathToTarget(Vector3 targetPosition)
-    {
-        if (navPath == null)
-        {
-            navPath = new NavMeshPath();
-        }
-
-        Vector3 sourcePosition = transform.position;
-        NavMeshHit hitStart;
-        // Coba cari posisi terdekat dengan queryFilter (agent type khusus) dan toleransi lebih besar (15.0f)
-        if (NavMesh.SamplePosition(transform.position, out hitStart, 15.0f, queryFilter))
-        {
-            sourcePosition = hitStart.position;
-        }
-        else if (NavMesh.SamplePosition(transform.position, out hitStart, 15.0f, NavMesh.AllAreas))
-        {
-            // Fallback jika agent type khusus belum di-bake di Navigation settings
-            sourcePosition = hitStart.position;
-        }
-
-        Vector3 destPosition = targetPosition;
-        NavMeshHit hitEnd;
-        if (NavMesh.SamplePosition(targetPosition, out hitEnd, 15.0f, queryFilter))
-        {
-            destPosition = hitEnd.position;
-        }
-        else if (NavMesh.SamplePosition(targetPosition, out hitEnd, 15.0f, NavMesh.AllAreas))
-        {
-            // Fallback jika agent type khusus belum di-bake di Navigation settings
-            destPosition = hitEnd.position;
-        }
-
-        // PENTING UNTUK WEBGL: NavMesh.CalculatePath adalah metode static yang sangat efisien 
-        // karena tidak memerlukan overhead update per-frame dari komponen NavMeshAgent.
-        NavMesh.CalculatePath(sourcePosition, destPosition, queryFilter, navPath);
-
-        // Fallback jika kalkulasi dengan queryFilter gagal (misal agent type khusus belum di-bake)
-        if (navPath.status == NavMeshPathStatus.PathInvalid)
-        {
-            NavMesh.CalculatePath(sourcePosition, destPosition, NavMesh.AllAreas, navPath);
-        }
-
-        if (navPath.status == NavMeshPathStatus.PathComplete || navPath.status == NavMeshPathStatus.PathPartial)
-        {
-            pathCornersCount = navPath.GetCornersNonAlloc(pathCornersBuffer);
-            currentCornerIndex = 0;
-
-            // Lewati titik index 0 karena itu biasanya adalah titik start (posisi NPC saat ini)
-            if (pathCornersCount > 1)
+            if (agent != null)
             {
-                currentCornerIndex = 1;
+                agent.speed = maxSpeed;
             }
         }
-        else
+
+        if (agent != null && agent.enabled)
         {
-#if UNITY_EDITOR
-            Debug.LogWarning($"[NPCController] NPC '{gameObject.name}' gagal mendapatkan jalur dari {sourcePosition} ke {destPosition}. PathStatus: {navPath.status}");
-#endif
-            pathCornersCount = 0;
+            agent.SetDestination(nextWaypoint.position);
+            agent.isStopped = false;
         }
-
-        // Reset pelacak stuck
-        stuckTimer = 0f;
-        lastPosition = transform.position;
-    }
-
-
-
-    /// <summary>
-    /// Mengemudikan bodi Rigidbody NPC secara fisik mengikuti parameter setara Player.
-    /// </summary>
-    private void SteerPhysicsTrolley(Vector3 moveDirection)
-    {
-        // 1. Tentukan pengali reduksi rotasi berdasarkan rasio kecepatan (Need for Seat style)
-        // Hitung speed magnitude secara manual tanpa instansiasi Vector3 baru untuk meminimalkan alokasi stack/CPU
-        float speedSqr = rb.velocity.x * rb.velocity.x + rb.velocity.z * rb.velocity.z;
-        float currentSpeed = speedSqr > 0.0001f ? Mathf.Sqrt(speedSqr) : 0f;
-        float speedRatio = Mathf.Clamp01(currentSpeed / maxSpeed);
-
-        float speedTurnMultiplier;
-        if (speedRatio >= heavyTurnSpeedThreshold)
-        {
-            speedTurnMultiplier = turnDifficultyAtMaxSpeed;
-        }
-        else
-        {
-            float normalizedRatio = speedRatio / heavyTurnSpeedThreshold;
-            speedTurnMultiplier = Mathf.Lerp(1f, turnDifficultyAtMaxSpeed, normalizedRatio);
-        }
-
-        // 2. Putar bodi secara halus menuju arah target sudut
-        Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
-        
-        // Menentukan besaran rotasi frame ini (100f adalah pengali kecocokan skala putaran)
-        float rotationStep = turnSensitivity * speedTurnMultiplier * 100f * Time.fixedDeltaTime;
-        rb.MoveRotation(Quaternion.RotateTowards(rb.rotation, targetRotation, rotationStep));
-
-        // 3. Terapkan akselesari pergerakan maju
-        // Hanya dorong maju jika orientasi hadapan NPC sudah mengarah ke sudut target (mencegah trolley meluncur miring)
-        float facingDot = Vector3.Dot(transform.forward, moveDirection);
-        float targetForwardSpeed = 0f;
-
-        if (facingDot > 0.2f)
-        {
-            targetForwardSpeed = maxSpeed;
-        }
-
-        // Terapkan akselerasi/deselerasi linear secara persistent
-        if (targetForwardSpeed > 0f)
-        {
-            currentForwardSpeed = Mathf.MoveTowards(currentForwardSpeed, targetForwardSpeed, acceleration * Time.fixedDeltaTime);
-        }
-        else
-        {
-            currentForwardSpeed = Mathf.MoveTowards(currentForwardSpeed, 0f, deceleration * Time.fixedDeltaTime);
-        }
-
-        // Pindahkan bodi menggunakan Rigidbody.velocity dengan mempertahankan gaya gravitasi Y
-        Vector3 localVelocity = transform.forward * currentForwardSpeed;
-        rb.velocity = new Vector3(localVelocity.x, rb.velocity.y, localVelocity.z);
-    }
-
-    /// <summary>
-    /// Mengerem trolley secara perlahan hingga berhenti total.
-    /// </summary>
-    private void DecelerateTrolley()
-    {
-        currentForwardSpeed = Mathf.MoveTowards(currentForwardSpeed, 0f, deceleration * Time.fixedDeltaTime);
-        Vector3 localVelocity = transform.forward * currentForwardSpeed;
-        rb.velocity = new Vector3(localVelocity.x, rb.velocity.y, localVelocity.z);
     }
 
     /// <summary>
@@ -628,7 +474,6 @@ public class NPCController : MonoBehaviour
     {
         if (lorePreset != null)
         {
-            // Ambil konfigurasi dinamis dari ScriptableObject yang di-assign
             activeMinSpeed = lorePreset.activeMinSpeed;
             activeMaxSpeed = lorePreset.activeMaxSpeed;
             activeMinStay = lorePreset.activeMinStay;
@@ -639,11 +484,9 @@ public class NPCController : MonoBehaviour
         }
         else
         {
-            // Fallback manual bawaan jika ScriptableObject kosong agar game tetap berjalan stabil
             switch (npcType)
             {
                 case NPCType.YoungMan:
-                    // Young Man: Kecepatan random 8-9 m/s, Stay random 5-6 detik.
                     activeMinSpeed = 8.0f;
                     activeMaxSpeed = 9.0f;
                     activeMinStay = 5.0f;
@@ -654,7 +497,6 @@ public class NPCController : MonoBehaviour
                     break;
 
                 case NPCType.YoungWoman:
-                    // Young Woman: Kecepatan random 5-6 m/s, Stay random 5-6 detik.
                     activeMinSpeed = 5.0f;
                     activeMaxSpeed = 6.0f;
                     activeMinStay = 5.0f;
@@ -665,7 +507,6 @@ public class NPCController : MonoBehaviour
                     break;
 
                 case NPCType.Mother:
-                    // Mother: Kecepatan random 9-10 m/s, Stay random 3-4 detik.
                     activeMinSpeed = 9.0f;
                     activeMaxSpeed = 10.0f;
                     activeMinStay = 3.0f;
@@ -676,7 +517,6 @@ public class NPCController : MonoBehaviour
                     break;
 
                 case NPCType.Childish:
-                    // Childish: Kecepatan random 6-7 m/s, Kelelahan diam cukup lama (6-7 detik).
                     activeMinSpeed = 6.0f;
                     activeMaxSpeed = 7.0f;
                     activeMinStay = 6.0f;
@@ -688,8 +528,15 @@ public class NPCController : MonoBehaviour
             }
         }
 
-        // Setel kecepatan awal secara acak
         maxSpeed = Random.Range(activeMinSpeed, activeMaxSpeed);
+
+        if (agent != null)
+        {
+            agent.speed = maxSpeed;
+            agent.acceleration = acceleration;
+            agent.angularSpeed = turnSensitivity * 100f;
+            agent.stoppingDistance = arrivalDistanceThreshold;
+        }
     }
 
     /// <summary>
@@ -710,16 +557,10 @@ public class NPCController : MonoBehaviour
             if (weaponRb == null) weaponRb = collision.gameObject.GetComponentInParent<Rigidbody>();
             if (weaponRb == null) weaponRb = collision.gameObject.GetComponentInChildren<Rigidbody>();
 
-            // Pastikan senjata tersebut sedang bergerak cepat/dilempar (kecepatan > threshold)
-            // Ini untuk menyaring senjata yang diam atau sekadar bergeser pelan di lantai.
             if (weaponRb != null && weaponRb.velocity.magnitude > weaponVelocityThreshold)
             {
                 float weight = objScript.ObjWeight;
                 
-                // LOGIC BERDASARKAN BERAT BARANG (GDD):
-                // - Berat <= lightWeaponWeightLimit: Stun selama lightStunDuration.
-                // - Berat <= mediumWeaponWeightLimit: Stun selama mediumStunDuration.
-                // - Berat diatas itu: KO langsung (diam selamanya).
                 if (weight <= lightWeaponWeightLimit)
                 {
                     TriggerStun(lightStunDuration, collision, weight);
@@ -741,7 +582,6 @@ public class NPCController : MonoBehaviour
         if (trolley == null) trolley = collision.gameObject.GetComponentInParent<TrolleyController>();
         if (trolley == null) trolley = collision.gameObject.GetComponentInChildren<TrolleyController>();
 
-        // Pastikan objek yang menabrak memiliki TrolleyController tetapi bukan dikendalikan oleh NPC (berarti player)
         if (trolley != null)
         {
             NPCController otherNpc = collision.gameObject.GetComponent<NPCController>();
@@ -750,12 +590,8 @@ public class NPCController : MonoBehaviour
 
             if (otherNpc == null)
             {
-                Rigidbody playerRb = collision.gameObject.GetComponent<Rigidbody>();
-                if (playerRb == null) playerRb = collision.gameObject.GetComponentInParent<Rigidbody>();
-                if (playerRb == null) playerRb = collision.gameObject.GetComponentInChildren<Rigidbody>();
-
-                // Kecepatan minimal troli player untuk memicu KO adalah playerCollisionSpeedThreshold m/s
-                if (playerRb != null && playerRb.velocity.magnitude > playerCollisionSpeedThreshold)
+                float playerSpeed = trolley.CurrentSpeed;
+                if (playerSpeed > playerCollisionSpeedThreshold)
                 {
                     TriggerKO();
                 }
@@ -765,109 +601,55 @@ public class NPCController : MonoBehaviour
 
     /// <summary>
     /// Memicu status Stun sementara pada NPC.
-    /// NPC akan terhenti, AI dinonaktifkan sementara, dan bodi terdorong pusing.
     /// </summary>
     private void TriggerStun(float duration, Collision collision, float weight)
     {
         isStunned = true;
         stunTimer = duration;
-        isWaiting = false; // Batalkan status tunggu staypoint normal jika sedang terhuyung
+        isWaiting = false;
 
 #if UNITY_EDITOR
         Debug.Log($"[NPCController] NPC '{gameObject.name}' Ter-Stun {duration} detik! (Berat Senjata: {weight} kg)");
 #endif
 
-        // Berikan gaya tolak (feedback fisik ringan) agar NPC tampak terhuyung saat terkena hantaman
         if (rb != null)
         {
+            rb.isKinematic = false;
             Vector3 pushDirection = (transform.position - collision.transform.position).normalized;
-            pushDirection.y = stunUpwardFactor; // Dorong sedikit ke atas agar efeknya lebih terasa
+            pushDirection.y = stunUpwardFactor;
             rb.AddForce(pushDirection.normalized * stunPushbackForce, ForceMode.Impulse);
         }
     }
 
     /// <summary>
-    /// Memicu status Knockout (KO) pada NPC, menghentikan kecerdasan buatan, dan melepaskan kendali fisika.
+    /// Memicu status Knockout (KO) pada NPC.
     /// </summary>
     private void TriggerKO()
     {
         isKO = true;
-        isStunned = false; // Pastikan status stun mati karena KO adalah status permanen tingkat akhir
+        isStunned = false;
 
-#if UNITY_EDITOR
-        Debug.Log($"[NPCController] NPC '{gameObject.name}' Ter-KO!");
-#endif
-
-        // Laporkan KO ke ScoreManager untuk penambahan poin
         if (ScoreManager.Instance != null)
         {
             ScoreManager.Instance.RegisterNpcKO();
         }
 
-        // Reset status tunggu AI
         isWaiting = false;
         
-        // OPTIMALISASI FISIKA WEBGL:
-        // Mematikan batasan rotasi Rigidbody agar troli dan NPC dapat terguling jatuh secara alami.
+        if (agent != null)
+        {
+            agent.enabled = false;
+        }
+
         if (rb != null)
         {
-            rb.constraints = RigidbodyConstraints.None; // Bebaskan FreezeRotationX dan FreezeRotationZ
+            rb.isKinematic = false;
+            rb.useGravity = true;
+            rb.constraints = RigidbodyConstraints.None;
             
-            // Terapkan gaya kejut (impulse force) acak untuk efek visual terpental yang memuaskan (Wow Effect)
             Vector3 bounceDirection = Vector3.up * koUpwardForce + Random.onUnitSphere * koRandomForceRange;
             rb.AddForce(bounceDirection, ForceMode.Impulse);
             rb.AddTorque(Random.onUnitSphere * koTorqueForce, ForceMode.Impulse);
-        }
-    }
-
-    /// <summary>
-    /// Coroutine mandiri untuk menjaga agar NPC tetap tegak lurus (rotation X & Z = 0) saat patroli.
-    /// Hanya aktif jika NPC belum dalam kondisi KO.
-    /// </summary>
-    private System.Collections.IEnumerator KeepUprightCoroutine()
-    {
-        // Cache yield instruction untuk mencegah alokasi GC (Garbage Collection) di Mobile WebGL
-        WaitForSeconds delay = rotationResetInterval > 0f ? new WaitForSeconds(rotationResetInterval) : null;
-
-        while (true)
-        {
-            if (isKO) yield break; // Jika sudah KO, matikan coroutine ini selamanya agar bisa terguling bebas
-
-            ResetRotationXZ();
-
-            if (rotationResetInterval > 0f)
-            {
-                yield return delay;
-            }
-            else
-            {
-                yield return null; // Jika interval disetel <= 0, reset berjalan setiap frame (smooth)
-            }
-        }
-    }
-
-    /// <summary>
-    /// Mereset rotasi X dan Z dari transform menjadi tepat 0 secara efisien.
-    /// Hanya melakukan write ke transform jika ada deviasi sudut (menghindari CPU overhead di WebGL).
-    /// </summary>
-    private void ResetRotationXZ()
-    {
-        Vector3 currentRot = transform.eulerAngles;
-        // PENTING: Gunakan Mathf.Approximately untuk mengecek deviasi float secara cepat tanpa overhead
-        if (!Mathf.Approximately(currentRot.x, 0f) || !Mathf.Approximately(currentRot.z, 0f))
-        {
-            currentRot.x = 0f;
-            currentRot.z = 0f;
-            transform.eulerAngles = currentRot;
-
-            // Jika Rigidbody masih memiliki sisa kecepatan sudut miring, hentikan agar rotasi fisik sinkron
-            if (rb != null && !rb.isKinematic)
-            {
-                Vector3 angularVel = rb.angularVelocity;
-                angularVel.x = 0f;
-                angularVel.z = 0f;
-                rb.angularVelocity = angularVel;
-            }
         }
     }
 }

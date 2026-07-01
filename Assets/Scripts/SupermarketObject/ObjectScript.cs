@@ -180,15 +180,8 @@ public class ObjectScript : MonoBehaviour
     {
         if (isPermanentlySleeping || rb == null) return;
 
-        // KODENYA TERSPESIALISASI: Keluarkan dari parent trolley agar tidak mengganggu fisika pergerakan trolley saat barang bergerak bebas
-        if (ObjectiveManager.Instance != null && ObjectiveManager.Instance.CollectableObjectsParent != null)
-        {
-            transform.SetParent(ObjectiveManager.Instance.CollectableObjectsParent);
-        }
-        else
-        {
-            transform.SetParent(null);
-        }
+        // KODENYA TERSPESIALISASI: Keluarkan dari parent trolley (ubah parent menjadi null) agar tidak mengganggu fisika pergerakan trolley saat barang bergerak bebas
+        transform.SetParent(null);
 
         // Aktifkan kembali collider saat bergerak/jatuh
         SetCollidersEnabled(true);
@@ -197,6 +190,9 @@ public class ObjectScript : MonoBehaviour
         rb.useGravity = true;
         isPhysicsActive = true;
         activeTime = 0f;
+
+        // KODENYA TERSPESIALISASI: Ubah layer kembali ke Goods ketika barang dibangunkan/keluar dari trolley
+        SetLayerRecursive(layerGoods);
 
         if (sleepMonitorCoroutine != null) StopCoroutine(sleepMonitorCoroutine);
         sleepMonitorCoroutine = StartCoroutine(PhysicsSleepMonitorCoroutine());
@@ -375,15 +371,8 @@ public class ObjectScript : MonoBehaviour
             areaTrigger.enabled = true;
         }
 
-        // KODENYA TERSPESIALISASI: Keluarkan dari parent trolley agar bebas bergerak/memantul saat tabrakan
-        if (ObjectiveManager.Instance != null && ObjectiveManager.Instance.CollectableObjectsParent != null)
-        {
-            transform.SetParent(ObjectiveManager.Instance.CollectableObjectsParent);
-        }
-        else
-        {
-            transform.SetParent(null);
-        }
+        // KODENYA TERSPESIALISASI: Keluarkan dari parent trolley (ubah parent menjadi null) agar bebas bergerak/memantul saat tabrakan
+        transform.SetParent(null);
 
         // Aktifkan kembali collider agar bisa memantul/tabrakan secara fisik
         SetCollidersEnabled(true);
